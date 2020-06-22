@@ -1,0 +1,8 @@
+*.pyc
+**.pyc
+*.pkl
+**.cpython-36.pyc
+*/__pycache__/*
+*/.vscode*
+*.code-workspace
+.vscode*
