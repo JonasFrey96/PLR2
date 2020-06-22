@@ -7,7 +7,7 @@ from estimation.filter import Linear_Estimator, Kalman_Filter, load_ycb_sequence
 from estimation.motion import Linear_Motion
 from estimation.state import State_R3xQuat, State_SE3, points
 from estimation.errors import ADD, ADDS
-from loaders import ConfigLoader
+from loaders_v2 import ConfigLoader
 from scipy.spatial.transform import Rotation as R
 
 def calculate_print_error(pred, gt):

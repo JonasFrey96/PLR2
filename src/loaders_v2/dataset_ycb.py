@@ -22,7 +22,6 @@ import torch.utils.data as data
 from PIL import Image
 import string
 import math
-import h5py
 import coloredlogs
 import logging
 import os
@@ -140,9 +139,7 @@ class YCB(Backend):
         unique_desig = (desig, obj_idx)
 
         if len(mask.nonzero()[0]) <= self._minimum_num_pt:
-            logging.info(
-                f'Object not visible ! Desig: {desig} Object{obj_idx}')
-            return (False, gt_rot_wxyz, gt_trans, unique_desig)
+          return (False, gt_rot_wxyz, gt_trans, unique_desig)
 
         # take the noise color image
         if self._cfg_d['noise_cfg']['status']:

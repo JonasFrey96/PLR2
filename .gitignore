@@ -1,5 +1,10 @@
 *.pyc
 **.pyc
+ipython_config.py
+# Jupyter Notebook
+.ipynb_checkpoints
+*/__pycache__
+**/__pycache__
 *.pkl
 **.cpython-36.pyc
 */__pycache__/*
