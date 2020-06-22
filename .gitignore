@@ -11,3 +11,5 @@ ipython_config.py
 */.vscode*
 *.code-workspace
 .vscode*
+*.swp
+__pycache__/
