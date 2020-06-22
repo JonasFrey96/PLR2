@@ -25,8 +25,7 @@ from datasets.linemod.dataset import PoseDataset as PoseDataset_linemod
 from lib.network import PoseNet, PoseRefineNet
 from lib.loss import Loss
 from lib.loss_refiner import Loss_refine
-from lib.utils import setup_logger
-
+from lib.utils import setup_logg
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default = 'ycb', help='ycb or linemod')
 parser.add_argument('--dataset_root', type=str, default = '', help='dataset root dir (''YCB_Video_Dataset'' or ''Linemod_preprocessed'')')
