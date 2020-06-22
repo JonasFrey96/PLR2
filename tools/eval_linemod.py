@@ -35,7 +35,6 @@ iteration = 4
 bs = 1
 dataset_config_dir = 'datasets/linemod/dataset_config'
 output_result_dir = 'experiments/eval_result/linemod'
-knn = KNearestNeighbor(1)
 
 estimator = PoseNet(num_points = num_points, num_obj = num_objects)
 estimator.cuda()
@@ -93,7 +92,7 @@ for i, data in enumerate(testdataloader, 0):
         my_mat = quaternion_matrix(my_r)
         R = Variable(torch.from_numpy(my_mat[:3, :3].astype(np.float32))).cuda().view(1, 3, 3)
         my_mat[0:3, 3] = my_t
-        
+
         new_points = torch.bmm((points - T), R).contiguous()
         pred_r, pred_t = refiner(new_points, emb, idx)
         pred_r = pred_r.view(1, 1, -1)
@@ -123,7 +122,7 @@ for i, data in enumerate(testdataloader, 0):
     if idx[0].item() in sym_list:
         pred = torch.from_numpy(pred.astype(np.float32)).cuda().transpose(1, 0).contiguous()
         target = torch.from_numpy(target.astype(np.float32)).cuda().transpose(1, 0).contiguous()
-        inds = knn(target.unsqueeze(0), pred.unsqueeze(0))
+        inds = KNearestNeighbor.apply(target.unsqueeze(0), pred.unsqueeze(0), 1)
         target = torch.index_select(target, 1, inds.view(-1) - 1)
         dis = torch.mean(torch.norm((pred.transpose(1, 0) - target.transpose(1, 0)), dim=1), dim=0).item()
     else:
