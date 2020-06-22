@@ -7,7 +7,6 @@ import time
 import logging
 import coloredlogs
 import copy
-import open3d as o3d
 import torch
 import torch.utils.data as data
 import random

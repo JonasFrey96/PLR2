@@ -1,7 +1,6 @@
 import numpy as np
 import sys
 import os
-from tensorboardX import SummaryWriter
 from PIL import Image
 from visu.helper_functions import save_image
 from scipy.spatial.transform import Rotation as R
@@ -13,8 +12,7 @@ import k3d
 
 
 class Visualizer():
-    def __init__(self, SummaryWriter, p_visu):
-        self.writer = SummaryWriter
+    def __init__(self, p_visu):
         if p_visu[-1] != '/':
             p_visu = p_visu + '/'
         self.p_visu = p_visu
@@ -71,9 +69,6 @@ class Visualizer():
             #print("IMAGE D:" ,img_d,img_d.shape )
             save_image(img_d, tag=str(epoch) + tag, p_store=self.p_visu)
 
-        if self.writer is not None:
-            self.writer.add_image(tag, img_d.astype(
-                np.uint8), global_step=epoch, dataformats='HWC')
 
     def plot_bounding_box(self, tag, epoch, img, rmin=0, rmax=0, cmin=0, cmax=0, str_width=2, store=False, jupyter=False, b=None):
         """
@@ -116,8 +111,6 @@ class Visualizer():
         if store:
             #store_ar = (img_d* 255).round().astype(np.uint8)
             save_image(img_d, tag=str(epoch) + tag, p_store=self.p_visu)
-        if self.writer is not None:
-            self.writer.add_image(tag, img_d, global_step=epoch)
         if jupyter:
             display(Image.fromarray(img_d))
 

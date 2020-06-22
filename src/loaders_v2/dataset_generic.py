@@ -1,5 +1,5 @@
 from loaders_v2 import YCB, Laval, Backend
-
+import random
 
 class GenericDataset():
 
@@ -16,6 +16,8 @@ class GenericDataset():
         self._obj_list_sym = cfg_d['obj_list_sym']
         self._obj_list_fil = cfg_d['obj_list_fil']
         self._batch_list = self._backend._batch_list
+        self._force_one_object_visible = cfg_d['output_cfg']['force_one_object_visible']
+
 
         if self._obj_list_fil is not None:
             self._batch_list = [
@@ -63,11 +65,19 @@ class GenericDataset():
 
     def __getitem__(self, index):
         seq = []
-        # print('called getiteam')
+        one_object_visible = False
         # iterate over a sequence specified in the batch list
         for k in self._batch_list[index][2]:
             # each batch_list entry has the form [obj_name, obj_full_path, index_list]
             num = '0' * int(6 - len(str(k))) + str(k)
             seq.append(self._backend.getElement(
                 desig=f'{self._batch_list[index][1]}/{num}', obj_idx=self._batch_list[index][0]))
+            if not isinstance(seq[-1][0],bool):
+              one_object_visible = True
+
+        if self._force_one_object_visible and one_object_visible == False:
+          rand = random.randrange(0, len(self))
+          print(rand)
+          return self[int(rand)]
+
         return seq
