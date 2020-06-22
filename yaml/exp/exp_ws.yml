@@ -39,7 +39,7 @@ visu_cfg:
  break_iter: 1
  same_cad_model: True
 
-d_test:
+d_val:
  name: "ycb"
  objects: 21
  num_points: 1000

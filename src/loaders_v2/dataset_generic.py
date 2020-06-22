@@ -77,7 +77,6 @@ class GenericDataset():
 
         if self._force_one_object_visible and one_object_visible == False:
           rand = random.randrange(0, len(self))
-          print(rand)
           return self[int(rand)]
 
         return seq
