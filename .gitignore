@@ -1,7 +1,6 @@
 *.pyc
 **.pyc
 ipython_config.py
-# Jupyter Notebook
 .ipynb_checkpoints
 */__pycache__
 **/__pycache__
@@ -13,3 +12,5 @@ ipython_config.py
 .vscode*
 *.swp
 __pycache__/
+/experiments/logs*
+/experiments/eval_result*
