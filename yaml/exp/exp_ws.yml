@@ -31,8 +31,8 @@ samples_early_break_validation: 100000
 time_early_break_validation: 10
 
 loader:
-  batch_size: 2
-  workers: 0
+  batch_size: 1
+  workers: 8
   shuffle: True
 
 visu_cfg:
@@ -56,10 +56,10 @@ d_val:
     - 20
   batch_list_cfg:
     sequence_names: null #either null or what name should be in the sequence for example to only plot hard interactions
-    seq_length: 1
+    seq_length: 3
     fixed_length: true
     sub_sample: 1
-    mode: "dense_fusion_test" #dense_fusion_test #dense_fusion_train
+    mode: "test" #dense_fusion_test
     add_syn_to_train: false
   noise_cfg:
     status: false
@@ -94,10 +94,10 @@ d_train:
     - 20
   batch_list_cfg:
     sequence_names: null #either null or what name should be in the sequence for example to only plot hard interactions
-    seq_length: 1
+    seq_length: 3
     fixed_length: true
     sub_sample: 1
-    mode: "dense_fusion_train" #dense_fusion_test #dense_fusion_train
+    mode: "train"
     add_syn_to_train: true
   noise_cfg:
     status: true
