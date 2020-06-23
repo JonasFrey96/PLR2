@@ -12,10 +12,11 @@ import k3d
 
 
 class Visualizer():
-    def __init__(self, p_visu):
+    def __init__(self, p_visu, writer=None):
         if p_visu[-1] != '/':
             p_visu = p_visu + '/'
         self.p_visu = p_visu
+        self.writer = writer
 
         if not os.path.exists(self.p_visu):
             os.makedirs(self.p_visu)
@@ -32,21 +33,9 @@ class Visualizer():
         rot: [3,3]
         """
 
-        # ToDo check Input data
         img_d = copy.deepcopy(img)
-        #print(type(img_d), img_d.shape)
-        # img_d = np.swapaxes(img_d, 0, 2)
-        # img_d = np.swapaxes(img_d, 0, 1)
-
         points = np.dot(points, rot_mat.T)
         points = np.add(points, trans[0, :])
-
-        # points = np.dot(points, rot_mat.T)
-        # points[i, :] = np.dot(rot_mat, points[i, :])
-        # p_x = points[i, 0] + trans[0, 0]  # x
-        # p_y = points[i, 1] + trans[0, 1]  # y
-        # p_z = points[i, 2] + trans[0, 2]  # z
-
         for i in range(0, points.shape[0]):
             p_x = points[i, 0]
             p_y = points[i, 1]
@@ -68,7 +57,9 @@ class Visualizer():
             #store_ar = (img_d* 255).round().astype(np.uint8)
             #print("IMAGE D:" ,img_d,img_d.shape )
             save_image(img_d, tag=str(epoch) + tag, p_store=self.p_visu)
-
+        if self.writer is not None:
+            self.writer.add_image(tag, img_d.astype(
+                np.uint8), global_step=epoch, dataformats='HWC')
 
     def plot_bounding_box(self, tag, epoch, img, rmin=0, rmax=0, cmin=0, cmax=0, str_width=2, store=False, jupyter=False, b=None):
         """
@@ -113,6 +104,9 @@ class Visualizer():
             save_image(img_d, tag=str(epoch) + tag, p_store=self.p_visu)
         if jupyter:
             display(Image.fromarray(img_d))
+        if self.writer is not None:
+            self.writer.add_image(tag, img_d.astype(
+                np.uint8), global_step=epoch, dataformats='HWC')
 
 
 def plot_pcd(x, point_size=0.005, c='g'):
@@ -170,46 +164,53 @@ def plot_two_pcd(x, y, point_size=0.005, c1='g', c2='r'):
     plt_points.shader = '3d'
     plot.display()
 
+
 class SequenceVisualizer():
-    def __init__(self, seq_data, images_path, output_path = None):
+    def __init__(self, seq_data, images_path, output_path=None):
         self.seq_data = seq_data
         self.images_path = images_path
         self.output_path = output_path
 
-    def plot_points_on_image(self, seq_no, frame_no, jupyter=False, store = False, pose_type = 'filtered'):
+    def plot_points_on_image(self, seq_no, frame_no, jupyter=False, store=False, pose_type='filtered'):
         seq_data = self.seq_data
         images_path = self.images_path
         output_path = self.output_path
         frame = seq_data[seq_no][frame_no]
         unique_desig = frame['dl_dict']['unique_desig'][0]
-        
-        if pose_type=='ground_truth':
+
+        if pose_type == 'ground_truth':
             # ground truth
-            t = frame['dl_dict']['gt_trans'].reshape(1,3)
-            rot_quat = re_quat(copy.deepcopy(frame['dl_dict']['gt_rot_wxyz'][0]), 'wxyz')
+            t = frame['dl_dict']['gt_trans'].reshape(1, 3)
+            rot_quat = re_quat(copy.deepcopy(
+                frame['dl_dict']['gt_rot_wxyz'][0]), 'wxyz')
             rot = R.from_quat(rot_quat).as_matrix()
-        elif pose_type=='filtered':
+        elif pose_type == 'filtered':
             # filter pred
-            t = np.array(frame['filter_pred']['t']).reshape(1,3)
-            rot_quat = re_quat(copy.deepcopy(frame['filter_pred']['r_wxyz']), 'wxyz')
+            t = np.array(frame['filter_pred']['t']).reshape(1, 3)
+            rot_quat = re_quat(copy.deepcopy(
+                frame['filter_pred']['r_wxyz']), 'wxyz')
             rot = R.from_quat(rot_quat).as_matrix()
-        elif pose_type=='final_pred_obs':
+        elif pose_type == 'final_pred_obs':
             # final pred
-            t = np.array(frame['final_pred_obs']['t']).reshape(1,3)
-            rot_quat = re_quat(copy.deepcopy(frame['final_pred_obs']['r_wxyz']), 'wxyz')
+            t = np.array(frame['final_pred_obs']['t']).reshape(1, 3)
+            rot_quat = re_quat(copy.deepcopy(
+                frame['final_pred_obs']['r_wxyz']), 'wxyz')
             rot = R.from_quat(rot_quat).as_matrix()
         else:
             raise Exception('Pose type not implemented.')
-        
+
         w = 2
-        if type(unique_desig)!=str:
-            im = np.array(Image.open(images_path + unique_desig[0] + '-color.png')) # ycb
+        if type(unique_desig) != str:
+            im = np.array(Image.open(
+                images_path + unique_desig[0] + '-color.png'))  # ycb
         else:
-            im = np.array(Image.open(images_path + unique_desig + '.png')) # laval
+            im = np.array(Image.open(
+                images_path + unique_desig + '.png'))  # laval
         img_d = copy.deepcopy(im)
-        
-        dl_dict  = frame['dl_dict']
-        points = copy.deepcopy(seq_data[seq_no][0]['dl_dict']['model_points'][0,:,:])
+
+        dl_dict = frame['dl_dict']
+        points = copy.deepcopy(
+            seq_data[seq_no][0]['dl_dict']['model_points'][0, :, :])
         points = np.dot(points, rot.T)
         points = np.add(points, t[0, :])
 
@@ -236,16 +237,18 @@ class SequenceVisualizer():
             display(img_disp)
 
         if store:
-            outpath = output_path + '{}_{}_{}.png'.format(pose_type, seq_no, frame_no)
+            outpath = output_path + \
+                '{}_{}_{}.png'.format(pose_type, seq_no, frame_no)
             img_disp.save(outpath, "PNG", compress_level=1)
             print("Saved image to {}".format(outpath))
 
-    def save_sequence(self, seq_no, pose_type = 'filtered', name = ''):
+    def save_sequence(self, seq_no, pose_type='filtered', name=''):
         for fn in range(len(self.seq_data)):
             self.plot_points_on_image(seq_no, fn, False, True, pose_type)
         if name:
             video_name = '{}_{}_{}'.format(name, pose_type, seq_no)
         else:
             video_name = '{}_{}'.format(pose_type, seq_no)
-        cmd = "cd {} && ffmpeg -r 10 -i ./filtered_{}_%d.png -vcodec mpeg4 -y {}.mp4".format(self.output_path, seq_no, video_name)
+        cmd = "cd {} && ffmpeg -r 10 -i ./filtered_{}_%d.png -vcodec mpeg4 -y {}.mp4".format(
+            self.output_path, seq_no, video_name)
         os.system(cmd)

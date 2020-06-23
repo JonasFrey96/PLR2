@@ -29,7 +29,7 @@ from loaders_v2 import ConfigLoader
 
 import torch
 from pytorch_lightning.core.lightning import LightningModule
-from pytorch_lightning import Trainer
+from pytorch_lightning import Trainer, seed_everything
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -45,6 +45,10 @@ from lib.network import PoseNet, PoseRefineNet
 from loaders_v2 import GenericDataset
 from visu import Visualizer
 from helper import re_quat
+
+
+# def costum_collate_fn(batch):
+#     return batch[0]
 
 
 class TrackNet6D(LightningModule):
@@ -79,8 +83,11 @@ class TrackNet6D(LightningModule):
         self.best_validation = 999
         self.best_validation_patience = 5
         self.early_stopping_value = 0.1
-        self.Visu = Visualizer(exp['model_path'] + '/visu/')
+        self.Visu = None
         self._dict_track = {}
+
+        self.number_images_log_val = 5
+        self.counter_images_logged = 0
 
     def load_my_state_dict(self, state_dict):
         own_state = self.estimator.state_dict()
@@ -157,6 +164,11 @@ class TrackNet6D(LightningModule):
                     float(loss)]
                 self._dict_track[f'{int(unique_desig[1])}_dis'] = [float(dis)]
 
+            if self.number_images_log_val > self.counter_images_logged:
+                self.visu(batch_idx, pred_r, pred_t, pred_c, points,
+                          target, model_points, cam, img_orig, unique_desig)
+                self.counter_images_logged += 1
+
             total_loss += loss
             total_dis += dis
 
@@ -167,6 +179,10 @@ class TrackNet6D(LightningModule):
     def test_step(self, batch, batch_idx):
         total_loss = 0
         total_dis = 0
+        if self.Visu is None:
+            self.Visu = Visualizer(exp['model_path'] +
+                                   '/visu/', self.logger.experiment)
+
         for frame in batch:
 
             if frame[0].dtype == torch.bool:
@@ -181,46 +197,8 @@ class TrackNet6D(LightningModule):
 
             loss, dis, new_points, new_target = self.criterion(
                 pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
-
-            self.Visu.plot_estimated_pose(tag='ground_truth_%d' % (batch_idx),
-                                          epoch=self.current_epoch,
-                                          img=img_orig[0, :, :,
-                                                       :].detach().cpu().numpy(),
-                                          points=copy.deepcopy(
-                                          target[0, :, :].detach().cpu().numpy()),
-                                          trans=np.array([[0, 0, 0]]),
-                                          rot_mat=np.diag((1, 1, 1)),
-                                          cam_cx=float(cam[0, 0]),
-                                          cam_cy=float(cam[0, 1]),
-                                          cam_fx=float(cam[0, 2]),
-                                          cam_fy=float(cam[0, 3]),
-                                          store=True)
-            # extract highest confident vote
-            how_max, which_max = torch.max(pred_c, 1)
-            div = (torch.norm(pred_r, dim=2).view(1, 1000, 1))
-            pred_r = (-1) * pred_r / div
-
-            c = how_max.detach()
-            t = (pred_t[0, int(which_max), :] +
-                 points[0, int(which_max), :]).detach().cpu().numpy()
-            r = pred_r[0, int(which_max), :].detach().cpu().numpy()
-
-            rot = R.from_quat(re_quat(r, 'wxyz'))
-
-            self.Visu.plot_estimated_pose(tag='final_prediction_%s_obj%d' % (str(unique_desig[0][0]).replace('/', "_"), int(unique_desig[1][0])),
-                                          epoch=self.current_epoch,
-                                          img=img_orig[0, :, :,
-                                                       :].detach().cpu().numpy(),
-                                          points=copy.deepcopy(
-                                              model_points[0, :, :].detach(
-                                              ).cpu().numpy()),
-                                          trans=t.reshape((1, 3)),
-                                          rot_mat=rot.as_matrix(),
-                                          cam_cx=float(cam[0, 0]),
-                                          cam_cy=float(cam[0, 1]),
-                                          cam_fx=float(cam[0, 2]),
-                                          cam_fy=float(cam[0, 3]),
-                                          store=True)
+            self.visu(batch_idx, pred_r, pred_t, pred_c, points,
+                      target, model_points, cam, img_orig, unique_desig)
 
             total_loss += loss
             total_dis += dis
@@ -256,7 +234,53 @@ class TrackNet6D(LightningModule):
         tensorboard_logs = {'val_dis_epoch': float(val_dis_mean.detach())}
         tensorboard_logs.update(self._df.mean().to_dict())
 
+        self.counter_images_logged = 0  # reset image log counter
+
         return {'val_dis_epoch': val_dis_mean.detach(), 'val_dis_epoch_float': float(val_dis_mean.detach()), 'log': tensorboard_logs}
+
+    def visu(self, batch_idx, pred_r, pred_t, pred_c, points, target, model_points, cam, img_orig, unique_desig):
+        if self.Visu is None:
+            self.Visu = Visualizer(exp['model_path'] +
+                                   '/visu/', self.logger.experiment)
+        self.Visu.plot_estimated_pose(tag='ground_truth_%s_obj%d' % (str(unique_desig[0][0]).replace('/', "_"), int(unique_desig[1][0])),
+                                      epoch=self.current_epoch,
+                                      img=img_orig[0, :, :,
+                                                   :].detach().cpu().numpy(),
+                                      points=copy.deepcopy(
+            target[0, :, :].detach().cpu().numpy()),
+            trans=np.array([[0, 0, 0]]),
+            rot_mat=np.diag((1, 1, 1)),
+            cam_cx=float(cam[0, 0]),
+            cam_cy=float(cam[0, 1]),
+            cam_fx=float(cam[0, 2]),
+            cam_fy=float(cam[0, 3]),
+            store=True)
+        # extract highest confident vote
+        how_max, which_max = torch.max(pred_c, 1)
+        div = (torch.norm(pred_r, dim=2).view(1, 1000, 1))
+        pred_r = (-1) * pred_r / div
+
+        c = how_max.detach()
+        t = (pred_t[0, int(which_max), :] +
+             points[0, int(which_max), :]).detach().cpu().numpy()
+        r = pred_r[0, int(which_max), :].detach().cpu().numpy()
+
+        rot = R.from_quat(re_quat(r, 'wxyz'))
+
+        self.Visu.plot_estimated_pose(tag='final_prediction_%s_obj%d' % (str(unique_desig[0][0]).replace('/', "_"), int(unique_desig[1][0])),
+                                      epoch=self.current_epoch,
+                                      img=img_orig[0, :, :,
+                                                   :].detach().cpu().numpy(),
+                                      points=copy.deepcopy(
+                                          model_points[0, :, :].detach(
+                                          ).cpu().numpy()),
+                                      trans=t.reshape((1, 3)),
+                                      rot_mat=rot.as_matrix(),
+                                      cam_cx=float(cam[0, 0]),
+                                      cam_cy=float(cam[0, 1]),
+                                      cam_fx=float(cam[0, 2]),
+                                      cam_fy=float(cam[0, 3]),
+                                      store=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.estimator.parameters(), lr=0.0001)
@@ -310,6 +334,8 @@ def file_path(string):
 
 
 if __name__ == "__main__":
+    # for reproducability
+    seed_everything(42)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp', type=file_path, default='yaml/exp/exp_ws.yml',  # required=True,
@@ -322,7 +348,6 @@ if __name__ == "__main__":
 
     exp = ConfigLoader().from_file(exp_cfg_path)
     env = ConfigLoader().from_file(env_cfg_path)
-    # keep this in mind
     """
     Trainer args (gpus, num_nodes, etc…) && Program arguments (data_path, cluster_email, etc…)
     Model specific arguments (layer_dim, num_layers, learning_rate, etc…)
@@ -374,10 +399,6 @@ if __name__ == "__main__":
         mode="min",
         prefix="",
     )
-
-    from pytorch_lightning.logging import CometLogger
-
-    # arguments made to CometLogger are passed on to the comet_ml.Experiment class
 
     trainer = Trainer(gpus=1,
                       num_nodes=1,
