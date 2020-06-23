@@ -11,7 +11,6 @@ extern THCState *state;
 
 int knn(at::Tensor& ref, at::Tensor& query, at::Tensor& idx)
 {
-
     // TODO check dimensions
     long batch, ref_nb, query_nb, dim, k;
     batch = ref.size(0);
@@ -20,30 +19,26 @@ int knn(at::Tensor& ref, at::Tensor& query, at::Tensor& idx)
     ref_nb = ref.size(2);
     query_nb = query.size(2);
 
-    float *ref_dev = ref.data<float>();
-    float *query_dev = query.data<float>();
-    long *idx_dev = idx.data<long>();
+    float *ref_dev = ref.data_ptr<float>();
+    float *query_dev = query.data_ptr<float>();
+    long *idx_dev = idx.data_ptr<long>();
 
-
-
-
-  if (ref.type().is_cuda()) {
+  if (ref.is_cuda()) {
 #ifdef WITH_CUDA
     // TODO raise error if not compiled with CUDA
     float *dist_dev = (float*)THCudaMalloc(state, ref_nb * query_nb * sizeof(float));
 
-    for (int b = 0; b < batch; b++)
-    {
-    knn_device(ref_dev + b * dim * ref_nb, ref_nb, query_dev + b * dim * query_nb, query_nb, dim, k,
-      dist_dev, idx_dev + b * k * query_nb, THCState_getCurrentStream(state));
+    const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+    for (int b = 0; b < batch; b++) {
+      knn_device(ref_dev + b * dim * ref_nb, ref_nb, query_dev + b * dim * query_nb, query_nb, dim, k,
+        dist_dev, idx_dev + b * k * query_nb, stream);
     }
-    THCudaFree(state, dist_dev);
     cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess)
-    {
+    if (err != cudaSuccess) {
         printf("error in knn: %s\n", cudaGetErrorString(err));
         THError("aborting");
     }
+    THCudaFree(state, dist_dev);
     return 1;
 #else
     AT_ERROR("Not compiled with GPU support");
