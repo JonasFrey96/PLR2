@@ -12,5 +12,12 @@ ipython_config.py
 .vscode*
 *.swp
 __pycache__/
-/experiments/logs*
-/experiments/eval_result*
+experiments/logs*
+experiments/eval_result*
+lib/knn/build/
+lib/knn/dist/
+*.egg-info
+*.so
+lib/knn/knn_pytorch/*.so
+
+.vscode/settings.json

@@ -14,6 +14,7 @@ import logging
 import numpy as np
 import pandas as pd
 import random
+import sklearn
 from scipy.spatial.transform import Rotation as R
 from math import pi
 import coloredlogs
@@ -47,17 +48,12 @@ from visu import Visualizer
 from helper import re_quat
 
 
-# def costum_collate_fn(batch):
-#     return batch[0]
-
-
 class TrackNet6D(LightningModule):
     def __init__(self, exp, env):
         super().__init__()
         self.hparams = {'exp': exp, 'env': env}
-
-        self.env = env
-        self.exp = exp
+        self.test_size = 0.9 
+        self.env, self.exp = env, exp
 
         self.estimator = PoseNet(
             num_points=exp['d_train']['num_points'],
@@ -179,9 +175,6 @@ class TrackNet6D(LightningModule):
     def test_step(self, batch, batch_idx):
         total_loss = 0
         total_dis = 0
-        if self.Visu is None:
-            self.Visu = Visualizer(exp['model_path'] +
-                                   '/visu/', self.logger.experiment)
 
         for frame in batch:
 
@@ -197,15 +190,16 @@ class TrackNet6D(LightningModule):
 
             loss, dis, new_points, new_target = self.criterion(
                 pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
+                
             self.visu(batch_idx, pred_r, pred_t, pred_c, points,
                       target, model_points, cam, img_orig, unique_desig)
 
             total_loss += loss
             total_dis += dis
 
-        tensorboard_logs = {'val_loss': total_loss /
-                            len(batch), 'val_dis': total_dis / len(batch)}
-        return {'val_loss': total_loss / len(batch), 'val_dis': total_dis / len(batch), 'log': tensorboard_logs}
+        tensorboard_logs = {'test_loss': total_loss /
+                            len(batch), 'test_dis': total_dis / len(batch)}
+        return {'test_loss': total_loss / len(batch), 'test_dis': total_dis / len(batch), 'log': tensorboard_logs}
 
     def validation_epoch_end(self, outputs):
         self._df = pd.DataFrame.from_dict(self._dict_track)
@@ -296,6 +290,11 @@ class TrackNet6D(LightningModule):
         dataset_train = GenericDataset(
             cfg_d=self.exp['d_train'],
             cfg_env=self.env)
+        
+        #initalize train and validation indices
+        self.indices_valid, self.indices_train = sklearn.model_selection.train_test_split(range(0,len(dataset_train)),test_size = self.test_size)
+        
+        dataset_subset = torch.utils.data.Subset(dataset_train, self.indices_train)
         dataloader_train = torch.utils.data.DataLoader(dataset_train,
                                                        batch_size=self.exp['loader']['batch_size'],
                                                        shuffle=True,
@@ -318,6 +317,8 @@ class TrackNet6D(LightningModule):
         dataset_val = GenericDataset(
             cfg_d=self.exp['d_val'],
             cfg_env=self.env)
+
+        dataset_subset = torch.utils.data.Subset(dataset_val, self.indices_valid)
         dataloader_val = torch.utils.data.DataLoader(dataset_val,
                                                      batch_size=self.exp['loader']['batch_size'],
                                                      shuffle=False,
@@ -381,7 +382,7 @@ if __name__ == "__main__":
     model = TrackNet6D(**dic)
 
     # default used by the Trainer
-    # TODO create one earlz stopping callback
+    # TODO create one early stopping callback
     # https://github.com/PyTorchLightning/pytorch-lightning/blob/63bd0582e35ad865c1f07f61975456f65de0f41f/pytorch_lightning/callbacks/base.py#L12
     early_stop_callback = EarlyStopping(
         monitor='val_dis_epoch_float',
@@ -411,8 +412,8 @@ if __name__ == "__main__":
                       limit_train_batches=0.0005,
                       limit_test_batches=0.1,
                       limit_val_batches=0.01,
-                      val_check_interval=100,
+                      val_check_interval=80,
                       terminate_on_nan=True)
 
-    # trainer.fit(model)
+    trainer.fit(model)
     trainer.test(model)
