@@ -1,8 +1,10 @@
 model_path: "/home/jonfrey/results/runs/lightning/debug"
 estimator_restore: true
-estimator_load: "/home/jonfrey/DenseFusion/trained_models/ycb/pose_model_18_0.012968894109229702.pth"
-criterion: "std"
+estimator_load: "/media/scratch1/jonfrey/models/trained_checkpoints/ycb/pose_model_26_0.012863246640872631.pth"
+refiner_restore: true
+refiner_load: "/media/scratch1/jonfrey/models/trained_checkpoints/ycb/pose_refine_model_69_0.009449292959118935.pth"
 
+criterion: "std"
 mail: false
 
 model_mode: "train" # train visu cycle_train
@@ -29,8 +31,8 @@ samples_early_break_validation: 100000
 time_early_break_validation: 10
 
 loader:
-  batch_size: 1
-  workers: 16
+  batch_size: 2
+  workers: 0
   shuffle: True
 
 visu_cfg:
