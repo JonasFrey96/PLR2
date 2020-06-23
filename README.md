@@ -2,7 +2,7 @@
 
 # Track This!
 
-![](doc/TrackThis%20Kalman%20Filter.png
+![](doc/TrackThis%20Kalman%20Filter.png)
 
 ## License
 
