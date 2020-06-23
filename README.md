@@ -17,6 +17,34 @@ Two config files have to be passed into this file the enviroment `env` and exper
 
 Both files are passed into the lightning module.
 
+### Instalation:
+
+Prerequests:
+
+- Cuda10.2
+
+Install conda env:
+
+```
+cd PLR2
+conda env create -f environment.yml
+```
+
+Install KNN (not tested):
+
+```
+conda activate track
+cd PLR2/lib/knn
+python setup.py build
+cp -r lib.linux-x86_64-3.7/* ./
+```
+
+Setting up global variables:
+Got to:
+`yaml/env/env_ws.yml`
+and edit the following pathts:
+TODO
+
 ### Lightning Module:
 
 #### Dataloaders:
