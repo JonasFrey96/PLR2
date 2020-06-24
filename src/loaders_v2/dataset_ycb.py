@@ -226,61 +226,6 @@ class YCB(Backend):
                torch.from_numpy(model_points.astype(np.float32)),
                torch.LongTensor([int(obj_idx) - 1]))
 
-        if self._cfg_d['output_cfg']['ff']['status']:
-            # ff is passed as tensor
-            if self._cfg_d['output_cfg']['ff']['prediction'] == 'ground_truth':
-                ff_rot = gt_rot_wxyz
-                ff_trans = gt_trans
-
-            elif self._cfg_d['output_cfg']['ff']['prediction'] == 'noise':
-                np_rand_angles = np.random.normal(
-                    0, self._cfg_d['output_cfg']['ff']['noise_degree'], (1, 3))
-                r_random = R.from_euler(
-                    'zyx', np_rand_angles, degrees=True)
-
-                ff_rot = np.dot(gt_homo[:3, :3], r_random.as_matrix()[0, :, :])
-                ff_trans = gt_trans + \
-                    np.random.normal(
-                        0, self._cfg_d['output_cfg']['ff']['noise_m'], (1, 3))
-                ff_rot = re_quat(R.from_matrix(
-                    ff_rot).as_quat(), 'xyzw')
-
-            elif self._cfg_d['output_cfg']['ff']['prediction'] == 'time_lag':
-                current_frame = int(desig.split('/')[-1])
-                return_gt = False
-                new_frame_idx = current_frame - \
-                    self._cfg_d['output_cfg']['ff']['time_lag_frames']
-                if new_frame_idx < 0:
-                    return_gt = True
-                else:
-                    # assume past frame exists and ask for forgiveness if not
-                    try:
-                        new_desig = desig.split(
-                            '/')[0] + f'/{new_frame_idx}'
-                        meta2 = np.load(
-                            f'{self._path}/processed/{new_desig}_meta.npy', allow_pickle=True)
-
-                        homo_1 = copy.copy(meta2.item().get('pose_se3'))
-                        homo_2 = np.eye(4)
-                        homo_2[:3, :3] = r.as_matrix()
-                        gt_homo_lag = np.dot(homo_2, homo_1)
-
-                        ff_rot = re_quat(R.from_matrix(
-                            gt_homo_lag[:3, :3]).as_quat(), 'xyzw').reshape((1, 4))
-                        ff_trans = gt_homo_lag[:3, 3]
-                    except:
-                        return_gt = True
-                if return_gt:
-                    ff_rot = gt_rot
-                    ff_trans = gt_trans
-
-            ff = (torch.from_numpy(ff_trans.reshape((3)).astype(np.float32)),
-                  torch.from_numpy(ff_rot.reshape((4)).astype(np.float32)))
-            tup += ff
-
-        else:
-            tup += (0, 0)
-
         if self._cfg_d['output_cfg']['add_depth_image']:
             tup += tuple([np.transpose(depth[rmin:rmax, cmin:cmax], (1, 0))])
         else:
