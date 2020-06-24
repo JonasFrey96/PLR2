@@ -50,8 +50,8 @@ if __name__ == "__main__":
 
         for _j, _i in enumerate(keys):
             dl_dict[_i] = frame[_j]
-        p_res = 'src/loaders_v2/test/results'
-        visu = Visualizer(None, p_res)
+        p_res = '~/images/'
+        visu = Visualizer(p_res)
         img = np.array(dl_dict['img'])
         img = np.transpose(img, (2, 1, 0)).astype(np.uint8)
         Image.fromarray(img).save(f'{p_res}/img_croped.png', "png")

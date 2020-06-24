@@ -52,7 +52,7 @@ class TrackNet6D(LightningModule):
     def __init__(self, exp, env):
         super().__init__()
         self.hparams = {'exp': exp, 'env': env}
-        self.test_size = 0.9 
+        self.test_size = 0.9
         self.env, self.exp = env, exp
 
         self.estimator = PoseNet(
@@ -190,7 +190,7 @@ class TrackNet6D(LightningModule):
 
             loss, dis, new_points, new_target = self.criterion(
                 pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
-                
+
             self.visu(batch_idx, pred_r, pred_t, pred_c, points,
                       target, model_points, cam, img_orig, unique_desig)
 
@@ -290,10 +290,10 @@ class TrackNet6D(LightningModule):
         dataset_train = GenericDataset(
             cfg_d=self.exp['d_train'],
             cfg_env=self.env)
-        
+
         #initalize train and validation indices
         self.indices_valid, self.indices_train = sklearn.model_selection.train_test_split(range(0,len(dataset_train)),test_size = self.test_size)
-        
+
         dataset_subset = torch.utils.data.Subset(dataset_train, self.indices_train)
         dataloader_train = torch.utils.data.DataLoader(dataset_train,
                                                        batch_size=self.exp['loader']['batch_size'],
