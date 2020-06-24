@@ -14,6 +14,7 @@ import logging
 import numpy as np
 import pandas as pd
 import random
+import sklearn
 from scipy.spatial.transform import Rotation as R
 from math import pi
 import coloredlogs
@@ -47,17 +48,12 @@ from visu import Visualizer
 from helper import re_quat
 
 
-# def costum_collate_fn(batch):
-#     return batch[0]
-
-
 class TrackNet6D(LightningModule):
     def __init__(self, exp, env):
         super().__init__()
         self.hparams = {'exp': exp, 'env': env}
-
-        self.env = env
-        self.exp = exp
+        self.test_size = 0.9
+        self.env, self.exp = env, exp
 
         self.estimator = PoseNet(
             num_points=exp['d_train']['num_points'],
@@ -83,11 +79,15 @@ class TrackNet6D(LightningModule):
         self.best_validation = 999
         self.best_validation_patience = 5
         self.early_stopping_value = 0.1
+
         self.Visu = None
         self._dict_track = {}
 
         self.number_images_log_val = 5
+        self.number_images_log_test = 10
         self.counter_images_logged = 0
+
+        self.init_train_vali_split = False
 
     def load_my_state_dict(self, state_dict):
         own_state = self.estimator.state_dict()
@@ -121,8 +121,8 @@ class TrackNet6D(LightningModule):
                 continue
 
             points, choose, img, target, model_points, idx = frame[0:6]
-            ff_trans, ff_rot, depth_img, img_orig, cam = frame[6:11]
-            gt_rot_wxyz, gt_trans, unique_desig = frame[11:14]
+            depth_img, img_orig, cam = frame[6:9]
+            gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
 
             pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
 
@@ -132,9 +132,9 @@ class TrackNet6D(LightningModule):
             total_dis += dis
         # choose correct loss here
         total_loss = total_loss / l
-        total_dis = total_dis.detach() / l
+        total_dis = total_dis / l
         tensorboard_logs = {'train_loss': total_loss, 'train_dis': total_dis}
-        return {'loss': total_loss, 'dis': total_dis, 'log': tensorboard_logs}
+        return {'loss': total_loss, 'dis': total_dis, 'log': tensorboard_logs, 'progress_bar': {'train_dis': total_dis, 'train_loss': total_loss}}
 
     def validation_step(self, batch, batch_idx):
         total_loss = 0
@@ -147,22 +147,33 @@ class TrackNet6D(LightningModule):
 
             # unpack the batch and apply forward pass
             points, choose, img, target, model_points, idx = frame[0:6]
-            ff_trans, ff_rot, depth_img, img_orig, cam = frame[6:11]
-            gt_rot_wxyz, gt_trans, unique_desig = frame[11:14]
+            depth_img, img_orig, cam = frame[6:9]
+            gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
 
             pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
 
             loss, dis, new_points, new_target = self.criterion(
                 pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
-            if f'{int(unique_desig[1])}_loss' in self._dict_track.keys():
-                self._dict_track[f'{int(unique_desig[1])}_loss'].append(
+
+            if f'val_loss' in self._dict_track.keys():
+                self._dict_track[f'val_loss'].append(
                     float(loss))
-                self._dict_track[f'{int(unique_desig[1])}_dis'].append(
+                self._dict_track[f'val_dis'].append(
                     float(dis))
             else:
-                self._dict_track[f'{int(unique_desig[1])}_loss'] = [
+                self._dict_track[f'val_loss'] = [float(loss)]
+                self._dict_track[f'val_dis'] = [float(dis)]
+
+            if f'val_{int(unique_desig[1])}_loss' in self._dict_track.keys():
+                self._dict_track[f'val_{int(unique_desig[1])}_loss'].append(
+                    float(loss))
+                self._dict_track[f'val_{int(unique_desig[1])}_dis'].append(
+                    float(dis))
+            else:
+                self._dict_track[f'val_{int(unique_desig[1])}_loss'] = [
                     float(loss)]
-                self._dict_track[f'{int(unique_desig[1])}_dis'] = [float(dis)]
+                self._dict_track[f'val_{int(unique_desig[1])}_dis'] = [
+                    float(dis)]
 
             if self.number_images_log_val > self.counter_images_logged:
                 self.visu(batch_idx, pred_r, pred_t, pred_c, points,
@@ -177,11 +188,9 @@ class TrackNet6D(LightningModule):
         return {'val_loss': total_loss / len(batch), 'val_dis': total_dis / len(batch), 'log': tensorboard_logs}
 
     def test_step(self, batch, batch_idx):
+        # used for tensorboard logging
         total_loss = 0
         total_dis = 0
-        if self.Visu is None:
-            self.Visu = Visualizer(exp['model_path'] +
-                                   '/visu/', self.logger.experiment)
 
         for frame in batch:
 
@@ -190,53 +199,88 @@ class TrackNet6D(LightningModule):
 
             # unpack the batch and apply forward pass
             points, choose, img, target, model_points, idx = frame[0:6]
-            ff_trans, ff_rot, depth_img, img_orig, cam = frame[6:11]
-            gt_rot_wxyz, gt_trans, unique_desig = frame[11:14]
+            depth_img, img_orig, cam = frame[6:9]
+            gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
 
             pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
 
             loss, dis, new_points, new_target = self.criterion(
                 pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
-            self.visu(batch_idx, pred_r, pred_t, pred_c, points,
-                      target, model_points, cam, img_orig, unique_desig)
+
+            # self._dict_track is used to log hole epoch
+            # add dis and loss to dict
+            if f'test_loss' in self._dict_track.keys():
+                self._dict_track[f'test_loss'].append(
+                    float(loss))
+                self._dict_track[f'test_dis'].append(
+                    float(dis))
+            else:
+                self._dict_track[f'test_loss'] = [float(loss)]
+                self._dict_track[f'test_dis'] = [float(dis)]
+
+            # add all object losses individual to dataframe
+            if f'test_{int(unique_desig[1])}_loss' in self._dict_track.keys():
+                self._dict_track[f'test_{int(unique_desig[1])}_loss'].append(
+                    float(loss))
+                self._dict_track[f'test_{int(unique_desig[1])}_dis'].append(
+                    float(dis))
+            else:
+                self._dict_track[f'test_{int(unique_desig[1])}_loss'] = [
+                    float(loss)]
+                self._dict_track[f'test_{int(unique_desig[1])}_dis'] = [
+                    float(dis)]
+
+            if self.number_images_log_test > self.counter_images_logged:
+                self.visu(batch_idx, pred_r, pred_t, pred_c, points,
+                          target, model_points, cam, img_orig, unique_desig)
+                self.counter_images_logged += 1
 
             total_loss += loss
             total_dis += dis
 
-        tensorboard_logs = {'val_loss': total_loss /
-                            len(batch), 'val_dis': total_dis / len(batch)}
-        return {'val_loss': total_loss / len(batch), 'val_dis': total_dis / len(batch), 'log': tensorboard_logs}
+        tensorboard_logs = {'test_loss': total_loss / len(batch),
+                            'test_dis': total_dis / len(batch)}
 
-    def validation_epoch_end(self, outputs):
-        self._df = pd.DataFrame.from_dict(self._dict_track)
+        return {**tensorboard_logs,
+                'log': tensorboard_logs}
+
+    def test_epoch_end(self, outputs):
+        avg_dict = {}
+        for old_key in list(self._dict_track.keys()):
+            avg_dict['avg_' +
+                     old_key] = float(np.mean(np.array(self._dict_track[old_key])))
         self._dict_track = {}
 
-        val_dis_mean = 0
-        for output in outputs:
-            val_dis = output['val_dis']
-            if self.trainer.use_dp or self.trainer.use_ddp2:
-                val_dis = torch.mean(val_dis)
-            val_dis_mean += val_dis
-        val_dis_mean /= len(outputs)
+        return {
+            **avg_dict, 'log': avg_dict}
 
-        if val_dis_mean < self.best_validation:
+    def validation_epoch_end(self, outputs):
+        avg_dict = {}
+        for old_key in list(self._dict_track.keys()):
+            avg_dict['avg_' +
+                     old_key] = float(np.mean(np.array(self._dict_track[old_key])))
+        self._dict_track = {}
 
-            self.best_validation = val_dis_mean
+        if avg_dict['avg_val_dis'] < self.best_validation:
+
+            self.best_validation = avg_dict['avg_val_dis']
             self.best_validation_patience_run = 0
         else:
             self.best_validation_patience_run += 1
             if self.best_validation_patience_run > self.best_validation_patience:
                 print("figure out how to set stop training flag")
 
-        if val_dis_mean < self.early_stopping_value:
+        if avg_dict['avg_val_dis'] < self.early_stopping_value:
             print("figure out how to set stop training flag")
-
-        tensorboard_logs = {'val_dis_epoch': float(val_dis_mean.detach())}
-        tensorboard_logs.update(self._df.mean().to_dict())
 
         self.counter_images_logged = 0  # reset image log counter
 
-        return {'val_dis_epoch': val_dis_mean.detach(), 'val_dis_epoch_float': float(val_dis_mean.detach()), 'log': tensorboard_logs}
+        tensorboard_log = copy.deepcopy(avg_dict)
+        for k in avg_dict.keys():
+            avg_dict[k] = torch.tensor(
+                avg_dict[k], dtype=torch.float32, device=self.device)
+
+        return {**avg_dict, 'avg_val_dis_float': float(avg_dict['avg_val_dis']), 'log': tensorboard_log}
 
     def visu(self, batch_idx, pred_r, pred_t, pred_c, points, target, model_points, cam, img_orig, unique_desig):
         if self.Visu is None:
@@ -283,12 +327,13 @@ class TrackNet6D(LightningModule):
                                       store=True)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.estimator.parameters(), lr=0.0001)
+        optimizer = torch.optim.Adam(
+            self.estimator.parameters(), lr=self.exp['lr'])
         scheduler = {
-            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.3, threshold=0.02),
-            'monitor': 'val_dis_epoch',  # Default: val_loss
-            'interval': 'epoch',
-            'frequency': 1
+            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **self.exp['lr_cfg']['on_plateau_cfg']),
+            'monitor': 'avg_val_dis',  # Default: val_loss
+            'interval': self.exp['lr_cfg']['interval'],
+            'frequency': self.exp['lr_cfg']['frequency']
         }
         return [optimizer], [scheduler]
 
@@ -296,6 +341,15 @@ class TrackNet6D(LightningModule):
         dataset_train = GenericDataset(
             cfg_d=self.exp['d_train'],
             cfg_env=self.env)
+
+        # initalize train and validation indices
+        if not self.init_train_vali_split:
+            self.init_train_vali_split = True
+            self.indices_valid, self.indices_train = sklearn.model_selection.train_test_split(
+                range(0, len(dataset_train)), test_size=self.test_size)
+
+        dataset_subset = torch.utils.data.Subset(
+            dataset_train, self.indices_train)
         dataloader_train = torch.utils.data.DataLoader(dataset_train,
                                                        batch_size=self.exp['loader']['batch_size'],
                                                        shuffle=True,
@@ -305,8 +359,9 @@ class TrackNet6D(LightningModule):
 
     def test_dataloader(self):
         dataset_test = GenericDataset(
-            cfg_d=self.exp['d_val'],
+            cfg_d=self.exp['d_test'],
             cfg_env=self.env)
+
         dataloader_test = torch.utils.data.DataLoader(dataset_test,
                                                       batch_size=self.exp['loader']['batch_size'],
                                                       shuffle=False,
@@ -316,8 +371,17 @@ class TrackNet6D(LightningModule):
 
     def val_dataloader(self):
         dataset_val = GenericDataset(
-            cfg_d=self.exp['d_val'],
+            cfg_d=self.exp['d_train'],
             cfg_env=self.env)
+
+        # initalize train and validation indices
+        if not self.init_train_vali_split:
+            self.init_train_vali_split = True
+            self.indices_valid, self.indices_train = sklearn.model_selection.train_test_split(
+                range(0, len(dataset_val)), test_size=self.test_size)
+
+        dataset_subset = torch.utils.data.Subset(
+            dataset_val, self.indices_valid)
         dataloader_val = torch.utils.data.DataLoader(dataset_val,
                                                      batch_size=self.exp['loader']['batch_size'],
                                                      shuffle=False,
@@ -348,11 +412,11 @@ if __name__ == "__main__":
 
     exp = ConfigLoader().from_file(exp_cfg_path)
     env = ConfigLoader().from_file(env_cfg_path)
+
     """
     Trainer args (gpus, num_nodes, etc…) && Program arguments (data_path, cluster_email, etc…)
     Model specific arguments (layer_dim, num_layers, learning_rate, etc…)
     """
-
     timestamp = datetime.datetime.now().replace(microsecond=0).isoformat()
 
     p = exp['model_path'].split('/')
@@ -381,11 +445,11 @@ if __name__ == "__main__":
     model = TrackNet6D(**dic)
 
     # default used by the Trainer
-    # TODO create one earlz stopping callback
+    # TODO create one early stopping callback
     # https://github.com/PyTorchLightning/pytorch-lightning/blob/63bd0582e35ad865c1f07f61975456f65de0f41f/pytorch_lightning/callbacks/base.py#L12
     early_stop_callback = EarlyStopping(
-        monitor='val_dis_epoch_float',
-        patience=4,
+        monitor='avg_val_dis_float',
+        patience=exp['early_stopping_cfg']['patience'],
         strict=True,
         verbose=True,
         mode='min'
@@ -395,7 +459,7 @@ if __name__ == "__main__":
     checkpoint_callback = ModelCheckpoint(
         filepath=model_path,
         verbose=True,
-        monitor="val_dis_epoch",
+        monitor="avg_val_dis",
         mode="min",
         prefix="",
     )
@@ -407,12 +471,12 @@ if __name__ == "__main__":
                       default_root_dir=model_path,
                       checkpoint_callback=checkpoint_callback,
                       early_stop_callback=early_stop_callback,
-                      fast_dev_run=True,
-                      limit_train_batches=0.0005,
-                      limit_test_batches=0.1,
-                      limit_val_batches=0.01,
-                      val_check_interval=100,
+                      fast_dev_run=False,
+                      limit_train_batches=0.00005,
+                      limit_test_batches=0.01,
+                      limit_val_batches=0.001,
+                      val_check_interval=8,
                       terminate_on_nan=True)
 
-    # trainer.fit(model)
+    trainer.fit(model)
     trainer.test(model)
