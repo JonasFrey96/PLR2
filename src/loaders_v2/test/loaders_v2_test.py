@@ -24,29 +24,12 @@ if __name__ == "__main__":
         cfg_d=exp_cfg['d_ycb'],
         cfg_env=env_cfg)
 
-    # ycb = YCBDataset(cfg_d=exp_cfg['d_YCB'],
-    #                  cfg_env=env_cfg, refine=False, visu=True)
-    # generic.refine = True
-    # seq = generic[0]
-    # print("Should be refine size:", seq[0][3].shape)
-    # generic.refine = False
-    # seq = generic[0]
-    # print("Should be normal size:", seq[0][3].shape)
-    # generic.visu = True
-    # seq = generic[0]
-    # print("Should be an image:", seq[0][8].shape)
-    # generic.visu = False
-    # seq = generic[0]
-    # print("Should be 0 since no image found:", seq[0][8])
-    # generic.visu = True
     for i in range(0, 10):
         frame = generic[i][0]
 
-        # frame2 = dataset_train[0][0]
-        # frame = ycb[0][0]
         dl_dict = {}
-        keys = ['points', 'choose', 'img', 'target', 'model_points', 'idx', 'ff_trans',
-                'ff_rot', 'depth_img', 'img_org', 'cam_cal', 'gt_rot_wxyz', 'gt_trans']
+        keys = ['points', 'choose', 'img', 'target', 'model_points', 'idx', 
+        'depth_img', 'img_org', 'cam_cal', 'gt_rot_wxyz', 'gt_trans']
 
         for _j, _i in enumerate(keys):
             dl_dict[_i] = frame[_j]
