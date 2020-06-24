@@ -13,16 +13,25 @@ from PIL import Image
 import copy
 from helper import re_quat
 from scipy.spatial.transform import Rotation as R
-if __name__ == "__main__":
 
-    exp_cfg = ConfigLoader().from_file(
-        '/home/jonfrey/PLR/src/loaders_v2/test/dataset_cfgs.yml')
-    env_cfg = ConfigLoader().from_file(
-        '/home/jonfrey/PLR/src/loaders_v2/test/env_ws.yml')
+import argparse
+
+def load_flags():
+    parser = argparse.ArgumentParse()
+    parser.add_argument('--env', type=str, help='Environment config file. Same as for tools/lightning.py',
+            default=os.environ['TRACK_ENV_CONFIG_FILE'])
+    parser.add_argument('--dataset', type=str, help='Dataset config file.',
+            default="src/loaders_v2/test/dataset_cfgs.yaml")
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    flags = load_flags()
+    dataset_configuration = ConfigLoader().from_file(flags.dataset)
+    environment_configuration = ConfigLoader().from_file(flags.env)
 
     generic = GenericDataset(
-        cfg_d=exp_cfg['d_ycb'],
-        cfg_env=env_cfg)
+        cfg_d=dataset_configuration['d_ycb'],
+        cfg_env=environment_configuration)
 
     # ycb = YCBDataset(cfg_d=exp_cfg['d_YCB'],
     #                  cfg_env=env_cfg, refine=False, visu=True)
@@ -51,6 +60,7 @@ if __name__ == "__main__":
         for _j, _i in enumerate(keys):
             dl_dict[_i] = frame[_j]
         p_res = '~/images/'
+        os.makedirs(p_res, exist_ok=True)
         visu = Visualizer(p_res)
         img = np.array(dl_dict['img'])
         img = np.transpose(img, (2, 1, 0)).astype(np.uint8)
