@@ -2,9 +2,9 @@ from .laval.camera import Camera
 from .configloader import ConfigLoader
 
 
-from .backend import Backend
-from .dataset_laval import Laval
-from .dataset_ycb import YCB
+from loaders_v2.backend import Backend
+from loaders_v2.dataset_laval import Laval
+from loaders_v2.dataset_ycb import YCB
 
 from .dataset_generic import GenericDataset
 
