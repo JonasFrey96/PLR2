@@ -1,47 +1,40 @@
 model_path: "/home/jonfrey/results/runs/lightning/debug"
 estimator_restore: true
 estimator_load: "/media/scratch1/jonfrey/models/trained_checkpoints/ycb/pose_model_26_0.012863246640872631.pth"
-refiner_restore: true
+refiner_restore: false
 refiner_load: "/media/scratch1/jonfrey/models/trained_checkpoints/ycb/pose_refine_model_69_0.009449292959118935.pth"
 
-criterion: "std"
 mail: false
 
-model_mode: "train" # train visu cycle_train
-
-optimizer: "ADAM"
-log_epoch: 1
-save_epoch: 1
-test_epoch: 1
-log_seq: 100 #number of sequences to log
-accumulate_grad_batches: 8 #number of frames for SGD
-visu: true
+accumulate_grad_batches: 8
 
 epochs: 500
-lr_normal: 0.0001
-lr_normal_rate: 0.3
+lr: 0.0001
+lr_cfg:
+  on_plateau_cfg:
+    mode: "min"
+    factor: 0.3
+    threshold: 0.02
+  interval: "epoch"
+  frequency: 1
+
+early_stopping_cfg:
+  patience: 4
+
 w_normal: 0.015
 w_normal_rate: 0.3
 
 decay_margin_start: 0.016
-
 samples_early_break_epoch: 5000000
 time_early_break_epoch: 10
 samples_early_break_validation: 100000
 time_early_break_validation: 10
 
 loader:
-  batch_size: 2
-  workers: 0
-  shuffle: True
+  batch_size: 1
+  workers: 4
 
-visu_cfg:
-  epoch: 1
-  refine_start: False
-  break_iter: 1
-  same_cad_model: True
-
-d_val:
+d_test:
   name: "ycb"
   objects: 21
   num_points: 1000
@@ -56,10 +49,10 @@ d_val:
     - 20
   batch_list_cfg:
     sequence_names: null #either null or what name should be in the sequence for example to only plot hard interactions
-    seq_length: 1
+    seq_length: 3
     fixed_length: true
     sub_sample: 1
-    mode: "dense_fusion_test" #dense_fusion_test #dense_fusion_train
+    mode: "test" #dense_fusion_test
     add_syn_to_train: false
   noise_cfg:
     status: false
@@ -69,12 +62,6 @@ d_val:
     status: false
     refine: false
     add_depth_image: false
-    ff:
-      status: true
-      prediction: "ground_truth" #ground_truth, noise, time_;ag  #check correct grammar
-      noise_degree: 2
-      noise_m: 0.01
-      time_lag_frames: 5
     visu:
       status: true
       return_img: true
@@ -94,10 +81,10 @@ d_train:
     - 20
   batch_list_cfg:
     sequence_names: null #either null or what name should be in the sequence for example to only plot hard interactions
-    seq_length: 1
+    seq_length: 3
     fixed_length: true
     sub_sample: 1
-    mode: "dense_fusion_train" #dense_fusion_test #dense_fusion_train
+    mode: "train"
     add_syn_to_train: true
   noise_cfg:
     status: true
@@ -107,12 +94,6 @@ d_train:
     status: false
     refine: false
     add_depth_image: false
-    ff:
-      status: true
-      prediction: "ground_truth" #ground_truth, noise, time_;ag  #check correct grammar
-      noise_degree: 2
-      noise_m: 0.01
-      time_lag_frames: 5
     visu:
       status: true
       return_img: true

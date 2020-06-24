@@ -20,3 +20,4 @@ lib/knn/dist/
 *.so
 lib/knn/knn_pytorch/*.so
 
+.vscode/settings.json
