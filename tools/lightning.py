@@ -397,21 +397,30 @@ def file_path(string):
         raise NotADirectoryError(string)
 
 
-if __name__ == "__main__":
-    # for reproducability
-    seed_everything(42)
-
+def read_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--exp', type=file_path, default='yaml/exp/exp_ws.yml',  # required=True,
                         help='The main experiment yaml file.')
     parser.add_argument('--env', type=file_path, default='yaml/env/env_natrix_jonas.yml',
                         help='The environment yaml file.')
-    args = parser.parse_args()
+    parser.add_argument('-w', '--workers', default=None)
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    # for reproducability
+    seed_everything(42)
+
+    args = read_args()
     exp_cfg_path = args.exp
     env_cfg_path = args.env
 
     exp = ConfigLoader().from_file(exp_cfg_path)
     env = ConfigLoader().from_file(env_cfg_path)
+
+    if args.workers is not None:
+        # This is for debugging. Can easily set workers to 0 so data is loaded on the main thread and
+        # the debugger can be loaded.
+        exp['loader']['workers'] = int(args.workers)
 
     """
     Trainer args (gpus, num_nodes, etc…) && Program arguments (data_path, cluster_email, etc…)
@@ -449,7 +458,7 @@ if __name__ == "__main__":
     # https://github.com/PyTorchLightning/pytorch-lightning/blob/63bd0582e35ad865c1f07f61975456f65de0f41f/pytorch_lightning/callbacks/base.py#L12
     early_stop_callback = EarlyStopping(
         monitor='avg_val_dis_float',
-        patience=exp['early_stopping_cfg']['patience'],
+        patience=exp.get('early_stopping_cfg', {}).get('patience', 10),
         strict=True,
         verbose=True,
         mode='min'
