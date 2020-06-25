@@ -45,13 +45,20 @@ from lib.network import PoseNet, PoseRefineNet
 # dataset
 from loaders_v2 import GenericDataset
 from visu import Visualizer
-from helper import re_quat
+from helper import re_quat, flatten_dict
 
 
 class TrackNet6D(LightningModule):
     def __init__(self, exp, env):
         super().__init__()
-        self.hparams = {'exp': exp, 'env': env}
+
+        # logging h-params
+        exp_config_flatten = flatten_dict(exp.get_FullLoader())
+        for k in exp_config_flatten.keys():
+            if exp_config_flatten[k] is None:
+                exp_config_flatten[k] = 'is None'
+        self.hparams = exp_config_flatten
+
         self.test_size = 0.9
         self.env, self.exp = env, exp
 
@@ -481,10 +488,10 @@ if __name__ == "__main__":
                       checkpoint_callback=checkpoint_callback,
                       early_stop_callback=early_stop_callback,
                       fast_dev_run=False,
-                      limit_train_batches=0.00005,
-                      limit_test_batches=0.01,
-                      limit_val_batches=0.001,
-                      val_check_interval=8,
+                      limit_train_batches=1.0,
+                      limit_test_batches=1.0,
+                      limit_val_batches=1.0,
+                      val_check_interval=0.0,
                       terminate_on_nan=True)
 
     trainer.fit(model)
