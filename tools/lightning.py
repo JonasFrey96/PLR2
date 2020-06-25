@@ -54,7 +54,7 @@ class TrackNet6D(LightningModule):
         super().__init__()
 
         # logging h-params
-        exp_config_flatten = flatten_dict(exp)
+        exp_config_flatten = flatten_dict(exp.get_FullLoader())
         for k in exp_config_flatten.keys():
             if exp_config_flatten[k] is None:
                 exp_config_flatten[k] = 'is None'
@@ -90,8 +90,8 @@ class TrackNet6D(LightningModule):
         self.w = exp['w_normal']
 
         self.best_validation = 999
-        self.best_validation_patience = 5
-        self.early_stopping_value = 0.1
+        self.best_validation_patience = 500
+        self.early_stopping_value = 0.001
 
         self.Visu = None
         self._dict_track = {}
@@ -509,9 +509,9 @@ if __name__ == "__main__":
                       checkpoint_callback=checkpoint_callback,
                       early_stop_callback=early_stop_callback,
                       fast_dev_run=False,
-                      limit_train_batches=5000,
-                      limit_test_batches=0.01,
-                      limit_val_batches=500,
+                      # limit_train_batches=5000,
+                      # limit_test_batches=0.01,
+                      # limit_val_batches=500,
                       # val_check_interval=5000,
                       terminate_on_nan=True)
 
