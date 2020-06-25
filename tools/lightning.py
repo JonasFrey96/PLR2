@@ -41,23 +41,36 @@ coloredlogs.install()
 from lib.loss import Loss
 from lib.loss_refiner import Loss_refine
 from lib.network import PoseNet, PoseRefineNet
-
+from lib.motion_network import MotionNetwork
+from lib.motion_loss import motion_loss
 # dataset
 from loaders_v2 import GenericDataset
 from visu import Visualizer
-from helper import re_quat
+from helper import re_quat, flatten_dict
 
 
 class TrackNet6D(LightningModule):
     def __init__(self, exp, env):
         super().__init__()
-        self.hparams = {'exp': exp, 'env': env}
+
+        # logging h-params
+        exp_config_flatten = flatten_dict(exp)
+        for k in exp_config_flatten.keys():
+            if exp_config_flatten[k] is None:
+                exp_config_flatten[k] = 'is None'
+
+        self.hparams = exp_config_flatten
         self.test_size = 0.9
         self.env, self.exp = env, exp
 
         self.estimator = PoseNet(
             num_points=exp['d_train']['num_points'],
             num_obj=exp['d_train']['objects'])
+
+        self.motion_network = MotionNetwork(
+            num_points=exp['d_train']['num_points'],
+            num_obj=exp['d_train']['objects'],
+            num_feat=1408)  # 32 for emb
 
         if exp['estimator_restore']:
             try:
@@ -105,35 +118,58 @@ class TrackNet6D(LightningModule):
 
     def forward(self, img, points, choose, idx):
 
-        pred_r, pred_t, pred_c, emb = self.estimator(
+        pred_r, pred_t, pred_c, emb, ap_x = self.estimator(
             img, points, choose, idx)
 
-        return pred_r, pred_t, pred_c, emb
+        return pred_r, pred_t, pred_c, emb, ap_x
 
     def training_step(self, batch, batch_idx):
         total_loss = 0
         total_dis = 0
         l = len(batch)
-        for frame in batch:
+        emb_ls = []
+        t_ls = []
+        gt_rot_wxyz_ls = []
+        gt_trans_ls = []
+        skip = False
+        for i, frame in enumerate(batch):
 
             # unpack the batch and apply forward pass
             if frame[0].dtype == torch.bool:
+                skip = True
                 continue
 
             points, choose, img, target, model_points, idx = frame[0:6]
             depth_img, img_orig, cam = frame[6:9]
             gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
 
-            pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
+            pred_r, pred_t, pred_c, emb, ap_x = self(img, points, choose, idx)
+            emb_ls.append(copy.copy(ap_x))  # use the color emb or ap_x
+            t_ls.append(copy.copy(pred_t))
+            gt_rot_wxyz_ls.append(copy.copy(gt_rot_wxyz))
+            gt_trans_ls.append(copy.copy(gt_trans))
 
             loss, dis, new_points, new_target = self.criterion(
                 pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
             total_loss += loss
             total_dis += dis
-        # choose correct loss here
-        total_loss = total_loss / l
-        total_dis = total_dis / l
-        tensorboard_logs = {'train_loss': total_loss, 'train_dis': total_dis}
+
+        if not skip:
+            out_rx, out_tx = self.motion_network(emb1=emb_ls[0],
+                                                 emb2=emb_ls[1],
+                                                 t1=t_ls[0],
+                                                 t2=t_ls[1],
+                                                 obj=idx)
+            m_loss = motion_loss(
+                out_rx, out_tx, gt_rot_wxyz_ls, gt_trans_ls)
+            loss_without_motion = total_loss
+            total_loss = total_loss / l + m_loss
+        else:
+            loss_without_motion = total_loss
+            total_dis = total_dis
+
+        tensorboard_logs = {'train_loss': total_loss, 'train_dis': total_dis,
+                            'train_loss_without_motion': loss_without_motion}
         return {'loss': total_loss, 'dis': total_dis, 'log': tensorboard_logs, 'progress_bar': {'train_dis': total_dis, 'train_loss': total_loss}}
 
     def validation_step(self, batch, batch_idx):
@@ -150,7 +186,7 @@ class TrackNet6D(LightningModule):
             depth_img, img_orig, cam = frame[6:9]
             gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
 
-            pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
+            pred_r, pred_t, pred_c, emb, ap_x = self(img, points, choose, idx)
 
             loss, dis, new_points, new_target = self.criterion(
                 pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
@@ -328,7 +364,8 @@ class TrackNet6D(LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
-            self.estimator.parameters(), lr=self.exp['lr'])
+            [{'params': self.estimator.parameters()},
+             {'params': self.motion_network.parameters()}], lr=self.exp['lr'])
         scheduler = {
             'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **self.exp['lr_cfg']['on_plateau_cfg']),
             'monitor': 'avg_val_dis',  # Default: val_loss
@@ -472,10 +509,10 @@ if __name__ == "__main__":
                       checkpoint_callback=checkpoint_callback,
                       early_stop_callback=early_stop_callback,
                       fast_dev_run=False,
-                      limit_train_batches=0.00005,
+                      limit_train_batches=5000,
                       limit_test_batches=0.01,
-                      limit_val_batches=0.001,
-                      val_check_interval=8,
+                      limit_val_batches=500,
+                      # val_check_interval=5000,
                       terminate_on_nan=True)
 
     trainer.fit(model)
