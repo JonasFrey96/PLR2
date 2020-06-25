@@ -37,9 +37,10 @@ from helper import flatten_dict, get_bbox_480_640
 _xmap = np.array([[j for i in range(640)] for j in range(480)])
 _ymap = np.array([[i for i in range(640)] for j in range(480)])
 
+
 class ImageExtractor:
     def __init__(self, desig, obj_idx, p_ycb, img, depth, label, meta, num_points,
-            pcd_to_cad):
+                 pcd_to_cad):
         self.desig = desig
         self.obj_idx = obj_idx
         self.depth = depth
@@ -72,11 +73,13 @@ class ImageExtractor:
         mask_depth = ma.getmaskarray(ma.masked_not_equal(self.depth, 0))
         mask_label = ma.getmaskarray(ma.masked_equal(self.label, self.obj_idx))
         self._mask = mask_label * mask_depth
-        self.rmin, self.rmax, self.cmin, self.cmax = get_bbox_480_640(mask_label)
+        self.rmin, self.rmax, self.cmin, self.cmax = get_bbox_480_640(
+            mask_label)
 
     def _compute_choose(self):
         # check how many pixels/points are within the masked area
-        choose = self._mask[self.rmin:self.rmax, self.cmin:self.cmax].flatten().nonzero()[0]
+        choose = self._mask[self.rmin:self.rmax, self.cmin:self.cmax].flatten().nonzero()[
+            0]
         # choose is a flattend array containg all pixles/points that are part of the object
         if len(choose) > self._num_pt:
             # randomly sample some points choose since object is to big
@@ -91,11 +94,11 @@ class ImageExtractor:
 
     def pointcloud(self):
         depth_masked = (self.depth[self.rmin:self.rmax, self.cmin:self.cmax]
-                .flatten()[self._choose][:, np.newaxis].astype(np.float32))
+                        .flatten()[self._choose][:, np.newaxis].astype(np.float32))
         xmap_masked = (_xmap[self.rmin:self.rmax, self.cmin:self.cmax]
-                .flatten()[self._choose][:, np.newaxis].astype(np.float32))
+                       .flatten()[self._choose][:, np.newaxis].astype(np.float32))
         ymap_masked = (_ymap[self.rmin:self.rmax, self.cmin:self.cmax]
-            .flatten()[self._choose][:, np.newaxis].astype(np.float32))
+                       .flatten()[self._choose][:, np.newaxis].astype(np.float32))
 
         cam_scale = self.meta['factor_depth'][0][0]
         pt2 = depth_masked / cam_scale
@@ -136,8 +139,10 @@ class ImageExtractor:
             seed = random.choice(self._real)
             back = np.array(self._trancolor(Image.open(
                 '{0}/{1}-color.png'.format(self._ycb_path, seed)).convert("RGB")))
-            back = np.transpose(back, (2, 0, 1))[:, self.rmin:self.rmax, self.cmin:self.cmax]
-            img_masked = back * mask_back[self.rmin:self.rmax, self.cmin:self.cmax] + self.img
+            back = np.transpose(back, (2, 0, 1))[
+                :, self.rmin:self.rmax, self.cmin:self.cmax]
+            img_masked = back * \
+                mask_back[self.rmin:self.rmax, self.cmin:self.cmax] + self.img
 
             try:
                 background_img = Image.open(
@@ -145,7 +150,7 @@ class ImageExtractor:
             except:
                 logging.info('cant find background')
         else:
-            #TODO: figure out if img_masked is supposed to be with the background masked out.
+            # TODO: figure out if img_masked is supposed to be with the background masked out.
             img_masked = self.img
         return img_masked
 
@@ -160,8 +165,10 @@ class ImageExtractor:
         else:
             dellist = random.sample(dellist, len(
                 self._pcd_to_cad[self.obj_idx]) - points_small)
-        model_points = np.delete(self._pcd_to_cad[self.obj_idx], dellist, axis=0)
+        model_points = np.delete(
+            self._pcd_to_cad[self.obj_idx], dellist, axis=0)
         return model_points
+
 
 class YCB(Backend):
     def __init__(self, cfg_d, cfg_env):
@@ -248,12 +255,12 @@ class YCB(Backend):
             img = self._trancolor(img)
 
         extractor = ImageExtractor(desig, obj_idx, self._ycb_path, img, depth, label, meta, self._num_pt,
-                self._pcd_cad_dict)
+                                   self._pcd_cad_dict)
         cloud = extractor.pointcloud()
         choose = extractor.choose()
         img_masked = extractor.image_masked()
         model_points = extractor.model_points(refine=self._dataset_config['output_cfg']['refine'],
-                points_small=self._num_pt_mesh_small, points_large=self._num_pt_mesh_large)
+                                              points_small=self._num_pt_mesh_small, points_large=self._num_pt_mesh_large)
         mask = extractor.mask()
         cam = extractor.cam
         target_t = extractor.translation()
@@ -267,7 +274,7 @@ class YCB(Backend):
         unique_desig = (desig, obj_idx)
 
         if len(mask.nonzero()[0]) <= self._minimum_num_pt:
-          return (False, gt_rot_wxyz, gt_trans, unique_desig)
+            return (False, gt_rot_wxyz, gt_trans, unique_desig)
 
         # adds noise to target to regress on
         target = np.dot(model_points, target_r.T)
@@ -290,61 +297,6 @@ class YCB(Backend):
                torch.from_numpy(target.astype(np.float32)),
                torch.from_numpy(model_points.astype(np.float32)),
                torch.LongTensor([int(obj_idx) - 1]))
-
-        if self._dataset_config['output_cfg']['ff']['status']:
-            # ff is passed as tensor
-            if self._dataset_config['output_cfg']['ff']['prediction'] == 'ground_truth':
-                ff_rot = gt_rot_wxyz
-                ff_trans = gt_trans
-
-            elif self._dataset_config['output_cfg']['ff']['prediction'] == 'noise':
-                np_rand_angles = np.random.normal(
-                    0, self._dataset_config['output_cfg']['ff']['noise_degree'], (1, 3))
-                r_random = R.from_euler(
-                    'zyx', np_rand_angles, degrees=True)
-
-                ff_rot = np.dot(gt_homo[:3, :3], r_random.as_matrix()[0, :, :])
-                ff_trans = gt_trans + \
-                    np.random.normal(
-                        0, self._dataset_config['output_cfg']['ff']['noise_m'], (1, 3))
-                ff_rot = re_quat(R.from_matrix(
-                    ff_rot).as_quat(), 'xyzw')
-
-            elif self._dataset_config['output_cfg']['ff']['prediction'] == 'time_lag':
-                current_frame = int(desig.split('/')[-1])
-                return_gt = False
-                new_frame_idx = current_frame - \
-                    self._dataset_config['output_cfg']['ff']['time_lag_frames']
-                if new_frame_idx < 0:
-                    return_gt = True
-                else:
-                    # assume past frame exists and ask for forgiveness if not
-                    try:
-                        new_desig = desig.split(
-                            '/')[0] + f'/{new_frame_idx}'
-                        meta2 = np.load(
-                            f'{self._path}/processed/{new_desig}_meta.npy', allow_pickle=True)
-
-                        homo_1 = copy.copy(meta2.item().get('pose_se3'))
-                        homo_2 = np.eye(4)
-                        homo_2[:3, :3] = r.as_matrix()
-                        gt_homo_lag = np.dot(homo_2, homo_1)
-
-                        ff_rot = re_quat(R.from_matrix(
-                            gt_homo_lag[:3, :3]).as_quat(), 'xyzw').reshape((1, 4))
-                        ff_trans = gt_homo_lag[:3, 3]
-                    except:
-                        return_gt = True
-                if return_gt:
-                    ff_rot = gt_rot
-                    ff_trans = gt_trans
-
-            ff = (torch.from_numpy(ff_trans.reshape((3)).astype(np.float32)),
-                  torch.from_numpy(ff_rot.reshape((4)).astype(np.float32)))
-            tup += ff
-
-        else:
-            tup += (0, 0)
 
         if self._dataset_config['output_cfg']['add_depth_image']:
             tup += tuple([np.transpose(depth[rmin:rmax, cmin:cmax], (1, 0))])
@@ -403,7 +355,8 @@ class YCB(Backend):
             seq_list = []
             # used frames keep max length to 10000 d+str(o) is the content
             used_frames = []
-            mem_size = 10 * self._dataset_config['batch_list_cfg']['seq_length']
+            mem_size = 10 * \
+                self._dataset_config['batch_list_cfg']['seq_length']
             total = len(desig)
             start = time.time()
             for j, d in enumerate(desig):
@@ -499,7 +452,8 @@ class YCB(Backend):
             desig_ls = self.get_desig(self._env_config['p_ycb_seq_train'])
 
         elif self._dataset_config['batch_list_cfg']['mode'] == 'train_inc_syn':
-            desig_ls = self.get_desig(self._env_config['p_ycb_seq_train_inc_syn'])
+            desig_ls = self.get_desig(
+                self._env_config['p_ycb_seq_train_inc_syn'])
 
         elif self._dataset_config['batch_list_cfg']['mode'] == 'test':
             desig_ls = self.get_desig(self._env_config['p_ycb_seq_test'])
@@ -588,4 +542,3 @@ class YCB(Backend):
     @ refine.setter
     def refine(self, refine):
         self._dataset_config['output_cfg']['refine'] = refine
-

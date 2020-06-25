@@ -1,28 +1,27 @@
 import os
+import argparse
 import sys
 import numpy as np
-
-if __name__ == "__main__":
-    os.chdir('/home/jonfrey/PLR')
-    sys.path.append('src')
-    sys.path.append('src/dense_fusion')
-
-from loaders_v2 import Backend, ConfigLoader, GenericDataset
-from visu import Visualizer
-from PIL import Image
-import copy
-from helper import re_quat
 from scipy.spatial.transform import Rotation as R
 
-import argparse
+from PIL import Image
+import copy
+
+
+sys.path.append('src')
+from loaders_v2 import Backend, ConfigLoader, GenericDataset
+from visu import Visualizer
+from helper import re_quat
+
 
 def load_flags():
-    parser = argparse.ArgumentParse()
+    parser = argparse.ArgumentParser()
     parser.add_argument('--env', type=str, help='Environment config file. Same as for tools/lightning.py',
-            default=os.environ['TRACK_ENV_CONFIG_FILE'])
+                        default="yaml/env/env_natrix_jonas.yml")
     parser.add_argument('--dataset', type=str, help='Dataset config file.',
-            default="src/loaders_v2/test/dataset_cfgs.yaml")
+                        default="src/loaders_v2/test/dataset_cfgs.yml")
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     flags = load_flags()
@@ -33,29 +32,12 @@ if __name__ == "__main__":
         cfg_d=dataset_configuration['d_ycb'],
         cfg_env=environment_configuration)
 
-    # ycb = YCBDataset(cfg_d=exp_cfg['d_YCB'],
-    #                  cfg_env=env_cfg, refine=False, visu=True)
-    # generic.refine = True
-    # seq = generic[0]
-    # print("Should be refine size:", seq[0][3].shape)
-    # generic.refine = False
-    # seq = generic[0]
-    # print("Should be normal size:", seq[0][3].shape)
-    # generic.visu = True
-    # seq = generic[0]
-    # print("Should be an image:", seq[0][8].shape)
-    # generic.visu = False
-    # seq = generic[0]
-    # print("Should be 0 since no image found:", seq[0][8])
-    # generic.visu = True
     for i in range(0, 10):
         frame = generic[i][0]
 
-        # frame2 = dataset_train[0][0]
-        # frame = ycb[0][0]
         dl_dict = {}
-        keys = ['points', 'choose', 'img', 'target', 'model_points', 'idx', 'ff_trans',
-                'ff_rot', 'depth_img', 'img_org', 'cam_cal', 'gt_rot_wxyz', 'gt_trans']
+        keys = ['points', 'choose', 'img', 'target', 'model_points', 'idx',
+                'depth_img', 'img_org', 'cam_cal', 'gt_rot_wxyz', 'gt_trans']
 
         for _j, _i in enumerate(keys):
             dl_dict[_i] = frame[_j]
