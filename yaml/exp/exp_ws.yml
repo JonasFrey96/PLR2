@@ -40,7 +40,13 @@ d_test:
   num_points: 1000
   num_pt_mesh_small: 500
   num_pt_mesh_large: 2300
-  obj_list_fil: null # if not null add list with specific elements
+  obj_list_fil: # if not null add list with specific elements
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
   obj_list_sym:
     - 12
     - 15
@@ -72,7 +78,13 @@ d_train:
   num_points: 1000
   num_pt_mesh_small: 500
   num_pt_mesh_large: 2300
-  obj_list_fil: null # if not null add list with specific elements
+  obj_list_fil: # if not null add list with specific elements
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
   obj_list_sym:
     - 12
     - 15

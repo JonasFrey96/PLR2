@@ -139,7 +139,7 @@ class YCB(Backend):
         unique_desig = (desig, obj_idx)
 
         if len(mask.nonzero()[0]) <= self._minimum_num_pt:
-          return (False, gt_rot_wxyz, gt_trans, unique_desig)
+            return (False, gt_rot_wxyz, gt_trans, unique_desig)
 
         # take the noise color image
         if self._cfg_d['noise_cfg']['status']:
@@ -437,11 +437,10 @@ class YCB(Backend):
             if not class_input:
                 break
             if self._obj_list_fil is not None:
-                for o in self._obj_list_fil:
-                    if class_input.find(o) != -1:
-                        cad_paths.append(
-                            self._cfg_env['p_ycb'] + '/models/' + class_input[:-1])
-                        name_to_idx[class_input[:-1]] = obj_idx
+                if obj_idx in self._obj_list_fil:
+                    cad_paths.append(
+                        self._cfg_env['p_ycb'] + '/models/' + class_input[:-1])
+                    name_to_idx[class_input[:-1]] = obj_idx
             else:
                 cad_paths.append(
                     self._cfg_env['p_ycb'] + '/models/' + class_input[:-1])
