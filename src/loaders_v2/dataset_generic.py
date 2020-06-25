@@ -16,7 +16,7 @@ class GenericDataset():
         self._obj_list_sym = cfg_d['obj_list_sym']
         self._obj_list_fil = cfg_d['obj_list_fil']
         self._batch_list = self._backend._batch_list
-        self._force_one_object_visible = cfg_d['output_cfg']['force_one_object_visible']
+        self._force_one_object_visible = cfg_d['output_cfg'].get('force_one_object_visible', False)
 
 
         if self._obj_list_fil is not None:

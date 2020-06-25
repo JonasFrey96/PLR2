@@ -43,7 +43,6 @@ d_ycb:
     sub_sample: 2
     mode: "train" #dense_fusion_test #dense_fusion_train
     add_syn_to_train: true
-
   noise_cfg:
     status: false
     noise_trans: 0.001
