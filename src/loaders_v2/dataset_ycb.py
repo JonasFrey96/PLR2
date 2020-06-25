@@ -50,11 +50,16 @@ class ImageExtractor:
         self._pcd_to_cad = pcd_to_cad
         self.cam = self.get_camera(desig)
         self._num_pt = num_points
-        self._compute_mask()
-        self._compute_pose()
-        self._compute_choose()
 
-        self.img = self._crop_image(img)
+        self._compute_pose()
+
+        # when less then this number of points are visble in the scene the frame is thrown away
+        self._minimum_num_pt = 50
+        self.valid = self._compute_mask()
+        if self.valid:
+
+            self._compute_choose()
+            self.img = self._crop_image(img)
 
     def _crop_image(self, img):
         # cropping the image
@@ -73,8 +78,14 @@ class ImageExtractor:
         mask_depth = ma.getmaskarray(ma.masked_not_equal(self.depth, 0))
         mask_label = ma.getmaskarray(ma.masked_equal(self.label, self.obj_idx))
         self._mask = mask_label * mask_depth
+
+        if len(self._mask.nonzero()[0]) <= self._minimum_num_pt:
+            return False
+
         self.rmin, self.rmax, self.cmin, self.cmax = get_bbox_480_640(
             mask_label)
+
+        return True
 
     def _compute_choose(self):
         # check how many pixels/points are within the masked area
@@ -185,7 +196,6 @@ class YCB(Backend):
 
         self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
         self._front_num = 2
-        self._minimum_num_pt = 50
 
     def getElement(self, desig, obj_idx):
         """
@@ -256,6 +266,18 @@ class YCB(Backend):
 
         extractor = ImageExtractor(desig, obj_idx, self._ycb_path, img, depth, label, meta, self._num_pt,
                                    self._pcd_cad_dict)
+
+        target_t = extractor.translation()
+        target_r = extractor.rotation()
+        gt_rot_wxyz = re_quat(
+            R.from_matrix(target_r).as_quat(), 'xyzw')
+        gt_trans = np.squeeze(target_t + add_t, 0)
+        unique_desig = (desig, obj_idx)
+
+        # less then min_num_points are visible in the scene of the object
+        if not extractor.valid:
+            return (False, gt_rot_wxyz, gt_trans, unique_desig)
+
         cloud = extractor.pointcloud()
         choose = extractor.choose()
         img_masked = extractor.image_masked()
@@ -263,18 +285,8 @@ class YCB(Backend):
                                               points_small=self._num_pt_mesh_small, points_large=self._num_pt_mesh_large)
         mask = extractor.mask()
         cam = extractor.cam
-        target_t = extractor.translation()
-        target_r = extractor.rotation()
 
         rmin, rmax, cmin, cmax = extractor.rmin, extractor.rmax, extractor.cmin, extractor.cmax
-
-        gt_rot_wxyz = re_quat(
-            R.from_matrix(target_r).as_quat(), 'xyzw')
-        gt_trans = np.squeeze(target_t + add_t, 0)
-        unique_desig = (desig, obj_idx)
-
-        if len(mask.nonzero()[0]) <= self._minimum_num_pt:
-            return (False, gt_rot_wxyz, gt_trans, unique_desig)
 
         # adds noise to target to regress on
         target = np.dot(model_points, target_r.T)
