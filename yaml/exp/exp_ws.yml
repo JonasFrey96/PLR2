@@ -19,7 +19,7 @@ lr_cfg:
   frequency: 1
 
 early_stopping_cfg:
-  patience: 4
+  patience: 100
 
 w_normal: 0.015
 w_normal_rate: 0.3
@@ -49,7 +49,7 @@ d_test:
     - 20
   batch_list_cfg:
     sequence_names: null #either null or what name should be in the sequence for example to only plot hard interactions
-    seq_length: 3
+    seq_length: 2
     fixed_length: true
     sub_sample: 1
     mode: "test" #dense_fusion_test
@@ -81,9 +81,9 @@ d_train:
     - 20
   batch_list_cfg:
     sequence_names: null #either null or what name should be in the sequence for example to only plot hard interactions
-    seq_length: 3
+    seq_length: 2
     fixed_length: true
-    sub_sample: 1
+    sub_sample: 10
     mode: "train"
     add_syn_to_train: true
   noise_cfg:
