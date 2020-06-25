@@ -21,7 +21,6 @@ import coloredlogs
 import datetime
 
 sys.path.insert(0, os.getcwd())
-print(os.path.join(os.getcwd() + '/src'))
 sys.path.append(os.path.join(os.getcwd() + '/src'))
 sys.path.append(os.path.join(os.getcwd() + '/lib'))
 # src modules
@@ -70,7 +69,8 @@ class TrackNet6D(LightningModule):
         self.motion_network = MotionNetwork(
             num_points=exp['d_train']['num_points'],
             num_obj=exp['d_train']['objects'],
-            num_feat=1408)  # 32 for emb
+            num_feat=1408,
+            mode='NearestTranslationEmbStack')  # 32 for emb
 
         if exp['estimator_restore']:
             try:
