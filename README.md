@@ -15,7 +15,7 @@ Two config files have to be passed into this file the enviroment `env` and exper
 - `env` defines your local setup and global paths outside of the repository.
 - `exp` contains all hyperparameters and training steup needed to train your model.
 
-Both files are passed into the lightning module should be stored in the `yaml/'-folder.
+Both files are passed into the lightning module should be stored in the `yaml/`-folder.
 
 ### Installation:
 
@@ -108,7 +108,7 @@ In the lightning module the validation and training data are seperated via **_sk
 #### Logging:
 
 Each run is stored in a seperated folder.
-The folder is configured in: `exp_ws` _model_path_
+The folder is configured in: `exp_ws` _model_path\_
 
 self.hparams are automatically stored as a yaml. In our case we add the env and exp to reproduce exactly our experiment.
 
@@ -130,6 +130,19 @@ Check PytorchLightning Documentation,
 ### Extending the Network:
 
 Add modules to the `src` folder or files to `lib`.
+
+
+## Keypoint labeling
+
+The subdirectory `labeling/` contains a small tool to label `.obj` meshes. The tool can be built using:
+```
+mkdir -p labeling/build/
+cd labeling/build/
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j
+```
+
+Once built, it can be run with `./labeler <path-to-data-dir>`. Currently, it assumes the data directory is in the same format as `ycb_video_models`. That is, it contains one subdirectory for each object, which then again contain an obj file called `textured.obj` and a texture file `texture_map.png`.
 
 ## License
 
