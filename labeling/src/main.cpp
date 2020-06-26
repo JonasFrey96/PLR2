@@ -1,4 +1,5 @@
 #include <igl/readOBJ.h>
+#include <igl/png/readPNG.h>
 #include <igl/opengl/glfw/imgui/ImGuiMenu.h>
 #include <igl/opengl/glfw/Viewer.h>
 #include <igl/unproject_onto_mesh.h>
@@ -38,9 +39,12 @@ Eigen::VectorXi v_map(0);
 Eigen::VectorXi f_map(0);
 
 Eigen::MatrixXd N(0, 3);
-Eigen::MatrixXi TC(0, 2);
-Eigen::MatrixXi FN(0, 1);
-Eigen::MatrixXi FTC(0, 1);
+Eigen::MatrixXd TC(0, 2);
+Eigen::MatrixXd FN(0, 1);
+Eigen::MatrixXi FTC(0, 3);
+
+using ColorMap = Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic>;
+ColorMap R, G, B, A;
 
 fs::path landmark_path(std::string mesh_path) {
   fs::path current_obj(mesh_path);
@@ -83,17 +87,30 @@ void load_landmarks(fs::path& filepath) {
   points_changed();
 }
 
+void load_texture(std::string& mesh_path) {
+  fs::path path(mesh_path);
+  fs::path texture_path = path.parent_path() / "texture_map.png";
+  igl::png::readPNG(texture_path.string(), R, G, B, A);
+}
+
 bool load_mesh(int mesh) {
   current_mesh = mesh;
   igl::readOBJ(faces_to_label[current_mesh], V_hd, TC, N, F_hd, FTC, FN);
+  load_texture(faces_to_label[current_mesh]);
 
   igl::decimate(V_hd, F_hd, 10000, V, F, f_map, v_map);
 
   viewer.data().clear();
   viewer.data().set_mesh(V_hd, F_hd);
-  viewer.data().set_face_based(true);
   viewer.data().set_normals(N);
+  viewer.data().set_texture(R, G, B, A);
+  viewer.data().set_uv(TC, FTC);
+  viewer.data().set_normals(FN);
   viewer.core().align_camera_center(V);
+  viewer.data().show_lines = false;
+  viewer.data().show_texture = true;
+  viewer.data().set_colors(Eigen::RowVector3d(1.0, 1.0, 1.0));
+  viewer.core().lighting_factor = 0.0;
 
   points.resize(0, 3);
   labels.clear();
@@ -215,7 +232,10 @@ void init_viewer(Viewer& viewer) {
   viewer.data().show_labels = true;
 
   igl::opengl::glfw::imgui::ImGuiMenu menu;
-  menu.callback_draw_viewer_window = [](){};
+  menu.callback_draw_viewer_window = [&menu](){
+    menu.draw_viewer_menu();
+
+  };
   viewer.plugins.push_back(&menu);
 
   viewer.launch();
