@@ -37,6 +37,21 @@ from helper import flatten_dict, get_bbox_480_640
 _xmap = np.array([[j for i in range(640)] for j in range(480)])
 _ymap = np.array([[i for i in range(640)] for j in range(480)])
 
+def _read_keypoint_file(filepath):
+    keypoints = []
+    with open(filepath, 'rt') as f:
+        while True:
+            keypoint = np.zeros(3, dtype=np.float32)
+            line = f.readline()
+            if line == '':
+                break
+            vertex_id, x, y, z = line.split(' ')
+            x, y, z = (float(i) for i in (x, y, z))
+            keypoint[0] = x
+            keypoint[1] = y
+            keypoint[2] = z
+            keypoints.append(keypoint)
+    return np.stack(keypoints)
 
 class ImageExtractor:
     def __init__(self, desig, obj_idx, p_ycb, img, depth, label, meta, num_points,
@@ -187,7 +202,7 @@ class YCB(Backend):
         self._dataset_config = cfg_d
         self._env_config = cfg_env
         self._ycb_path = cfg_env['p_ycb']
-        self._pcd_cad_dict, self._name_to_idx = self.get_pcd_cad_models()
+        self._pcd_cad_dict, self._name_to_idx, self._keypoints = self._read_model_files()
         self._batch_list = self.get_batch_list()
 
         self._length = len(self._batch_list)
@@ -213,10 +228,12 @@ class YCB(Backend):
             meta = scio.loadmat(
                 '{0}/{1}-meta.mat'.format(self._ycb_path, desig))
 
-        except:
+        except FileNotFoundError:
             logging.error(
                 'cant find files for {0}/{1}'.format(self._ycb_path, desig))
             return False
+
+        keypoints = self._keypoints[obj_idx]
 
         if self._dataset_config['output_cfg']['visu']['return_img']:
             img_copy = np.array(img.convert("RGB"))
@@ -306,7 +323,7 @@ class YCB(Backend):
         tup = (torch.from_numpy(cloud.astype(np.float32)),
                torch.LongTensor(choose.astype(np.int32)),
                self._norm(torch.from_numpy(img_masked.astype(np.float32))),
-               torch.from_numpy(target.astype(np.float32)),
+               torch.from_numpy(keypoints),
                torch.from_numpy(model_points.astype(np.float32)),
                torch.LongTensor([int(obj_idx) - 1]))
 
@@ -493,9 +510,16 @@ class YCB(Backend):
 
         return batch_ls
 
-    def get_pcd_cad_models(self):
+    def _read_model_files(self):
         p = self._env_config['p_ycb_obj']
-        class_file = open(p)
+        with open(p, 'rt') as class_file:
+            cad_dict, name_to_idx  = self._build_pcd_cad_dict(class_file)
+
+        keypoints = self._load_keypoints(name_to_idx)
+
+        return cad_dict, name_to_idx, keypoints
+
+    def _build_pcd_cad_dict(self, class_file):
         cad_paths = []
         obj_idx = 1
 
@@ -538,6 +562,13 @@ class YCB(Backend):
 
         return cad_dict, name_to_idx
 
+    def _load_keypoints(self, name_to_idx):
+        keypoints = {}
+        for name, object_index in name_to_idx.items():
+            keypoint_path = os.path.join(self._ycb_path, 'models', name, "textured.landmarks")
+            keypoints[object_index] = _read_keypoint_file(keypoint_path)
+        return keypoints
+
     @ property
     def visu(self):
         return self._dataset_config['output_cfg']['visu']['status']
@@ -553,3 +584,4 @@ class YCB(Backend):
     @ refine.setter
     def refine(self, refine):
         self._dataset_config['output_cfg']['refine'] = refine
+

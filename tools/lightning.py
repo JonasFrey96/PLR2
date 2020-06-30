@@ -122,14 +122,13 @@ class TrackNet6D(LightningModule):
         total_dis = 0
         l = len(batch)
         for frame in batch:
-
             # unpack the batch and apply forward pass
             if frame[0].dtype == torch.bool:
                 continue
 
-            points, choose, img, target, model_points, idx = frame[0:6]
-            depth_img, img_orig, cam = frame[6:9]
-            gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
+            (points, choose, img, keypoints, model_points, idx,
+                    depth_img, img_orig, cam,
+                    gt_rot_wxyz, gt_trans, unique_desig) = frame
 
             pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
 
@@ -153,9 +152,9 @@ class TrackNet6D(LightningModule):
                 continue
 
             # unpack the batch and apply forward pass
-            points, choose, img, target, model_points, idx = frame[0:6]
-            depth_img, img_orig, cam = frame[6:9]
-            gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
+            (points, choose, img, keypoints, model_points, idx,
+                    depth_img, img_orig, cam,
+                    gt_rot_wxyz, gt_trans, unique_desig) = frame
 
             pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
 
@@ -205,9 +204,9 @@ class TrackNet6D(LightningModule):
                 continue
 
             # unpack the batch and apply forward pass
-            points, choose, img, target, model_points, idx = frame[0:6]
-            depth_img, img_orig, cam = frame[6:9]
-            gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
+            (points, choose, img, keypoints, model_points, idx,
+                    depth_img, img_orig, cam,
+                    gt_rot_wxyz, gt_trans, unique_desig) = frame
 
             pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
 
