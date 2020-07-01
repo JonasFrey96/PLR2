@@ -50,6 +50,7 @@ class PoseNetFeat(nn.Module):
 
         self.ap1 = torch.nn.AvgPool1d(num_points)
         self.num_points = num_points
+
     def forward(self, x, emb):
         x = F.relu(self.conv1(x))
         emb = F.relu(self.e_conv1(emb))
@@ -73,7 +74,7 @@ class PoseNet(nn.Module):
         self.num_points = num_points
         self.cnn = ModifiedResnet()
         self.feat = PoseNetFeat(num_points)
-        
+
         self.conv1_r = torch.nn.Conv1d(1408, 640, 1)
         self.conv1_t = torch.nn.Conv1d(1408, 640, 1)
         self.conv1_c = torch.nn.Conv1d(1408, 640, 1)
@@ -94,19 +95,19 @@ class PoseNet(nn.Module):
 
     def forward(self, img, x, choose, obj):
         out_img = self.cnn(img)
-        
+
         bs, di, _, _ = out_img.size()
 
         emb = out_img.view(bs, di, -1)
         choose = choose.repeat(1, di, 1)
         emb = torch.gather(emb, 2, choose).contiguous()
-        
+
         x = x.transpose(2, 1).contiguous()
         ap_x = self.feat(x, emb)
 
         rx = F.relu(self.conv1_r(ap_x))
         tx = F.relu(self.conv1_t(ap_x))
-        cx = F.relu(self.conv1_c(ap_x))      
+        cx = F.relu(self.conv1_c(ap_x))
 
         rx = F.relu(self.conv2_r(rx))
         tx = F.relu(self.conv2_t(tx))
@@ -119,19 +120,54 @@ class PoseNet(nn.Module):
         rx = self.conv4_r(rx).view(bs, self.num_obj, 4, self.num_points)
         tx = self.conv4_t(tx).view(bs, self.num_obj, 3, self.num_points)
         cx = torch.sigmoid(self.conv4_c(cx)).view(bs, self.num_obj, 1, self.num_points)
-        
+
         b = 0
         out_rx = torch.index_select(rx[b], 0, obj[b])
         out_tx = torch.index_select(tx[b], 0, obj[b])
         out_cx = torch.index_select(cx[b], 0, obj[b])
-        
+
         out_rx = out_rx.contiguous().transpose(2, 1).contiguous()
         out_cx = out_cx.contiguous().transpose(2, 1).contiguous()
         out_tx = out_tx.contiguous().transpose(2, 1).contiguous()
-        
-        return out_rx, out_tx, out_cx, emb.detach()
- 
 
+        return out_rx, out_tx, out_cx, emb.detach()
+
+class KeypointNet(nn.Module):
+    def __init__(self, num_points, num_obj, num_keypoints=8):
+        super().__init__()
+        self.num_points = num_points
+        self.num_obj = num_obj
+        self.num_keypoints = num_keypoints
+        self.keypoint_features = num_keypoints * 3
+        self.image_network = ModifiedResnet()
+        self.point_network = PoseNetFeat(num_points)
+
+        self.conv0 = nn.Conv1d(1408, 512, kernel_size=1)
+        self.conv1 = nn.Conv1d(512, 512, kernel_size=1)
+        self.conv2 = nn.Conv1d(512, 256, kernel_size=1)
+        self.conv_out = nn.Conv1d(256, num_obj * self.keypoint_features, kernel_size=1)
+
+    def forward(self, img, x, choose, obj):
+        out_img = self.image_network(img)
+
+        batch_size, dimensions, _, _ = out_img.size()
+
+        embedding = out_img.view(batch_size, dimensions, -1)
+        choose = choose.repeat(1, dimensions, 1)
+        embedding = torch.gather(embedding, 2, choose).contiguous()
+
+        # N x P x D -> N x D x P
+        x = x.transpose(2, 1).contiguous()
+        # N x features x P
+        pointwise_features = self.point_network(x, embedding)
+        x = F.relu(self.conv0(pointwise_features))
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        # N x D x P -> N X P x num_obj x keypoints
+        x = self.conv_out(x).transpose(2, 1).reshape(batch_size, self.num_points,
+                self.num_obj, self.keypoint_features)
+        x = torch.index_select(x, dim=2, index=obj.flatten())[:, :, 0, :]
+        return x, embedding
 
 class PoseRefineNetFeat(nn.Module):
     def __init__(self, num_points):
@@ -172,7 +208,7 @@ class PoseRefineNet(nn.Module):
         super(PoseRefineNet, self).__init__()
         self.num_points = num_points
         self.feat = PoseRefineNetFeat(num_points)
-        
+
         self.conv1_r = torch.nn.Linear(1024, 512)
         self.conv1_t = torch.nn.Linear(1024, 512)
 
@@ -186,12 +222,12 @@ class PoseRefineNet(nn.Module):
 
     def forward(self, x, emb, obj):
         bs = x.size()[0]
-        
+
         x = x.transpose(2, 1).contiguous()
         ap_x = self.feat(x, emb)
 
         rx = F.relu(self.conv1_r(ap_x))
-        tx = F.relu(self.conv1_t(ap_x))   
+        tx = F.relu(self.conv1_t(ap_x))
 
         rx = F.relu(self.conv2_r(rx))
         tx = F.relu(self.conv2_t(tx))

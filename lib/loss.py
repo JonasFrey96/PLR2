@@ -6,6 +6,7 @@ import numpy as np
 import torch.nn as nn
 import random
 import torch.backends.cudnn as cudnn
+from torch.nn import functional as F
 from lib.knn.__init__ import KNearestNeighbor
 #from lib.knn import KNearestNeighbor
 
@@ -13,7 +14,7 @@ def loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, 
     bs, num_p, _ = pred_c.size()
 
     pred_r = pred_r / (torch.norm(pred_r, dim=2).view(bs, num_p, 1))
-    
+
     base = torch.cat(((1.0 - 2.0*(pred_r[:, :, 2]**2 + pred_r[:, :, 3]**2)).view(bs, num_p, 1),\
                       (2.0*pred_r[:, :, 1]*pred_r[:, :, 2] - 2.0*pred_r[:, :, 0]*pred_r[:, :, 3]).view(bs, num_p, 1), \
                       (2.0*pred_r[:, :, 0]*pred_r[:, :, 2] + 2.0*pred_r[:, :, 1]*pred_r[:, :, 3]).view(bs, num_p, 1), \
@@ -47,7 +48,7 @@ def loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, 
 
     dis = torch.mean(torch.norm((pred - target), dim=2), dim=1)
     loss = torch.mean((dis * pred_c - w * torch.log(pred_c)), dim=0)
-    
+
 
     pred_c = pred_c.view(bs, num_p)
     how_max, which_max = torch.max(pred_c, 1)
@@ -79,3 +80,33 @@ class Loss(_Loss):
     def forward(self, pred_r, pred_t, pred_c, target, model_points, idx, points, w, refine):
 
         return loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, w, refine, self.num_pt_mesh, self.sym_list)
+
+class KeypointLoss(_Loss):
+    def __init__(self, num_points_mesh, num_keypoints=8):
+        super().__init__(True)
+        self.num_points_mesh = num_points_mesh
+        self.num_keypoints = num_keypoints
+
+    def forward(self, predicted_keypoints, gt_keypoints, points, gt_trans):
+        # For each point and keypoint, calculate the displacement vector from the
+        # point to the keypoint. Return the average mean squared error between the displacement
+        # and the actual keypoints.
+        # predicted: N x P x K x 3 or N x P x K * 3
+        # gt_keypoints: N x K x 3
+        # points: N x P x 3
+        # gt_trans: N x 3
+        shape = predicted_keypoints.shape
+        N, P = (shape[0], shape[1])
+        predicted_keypoints = predicted_keypoints.reshape(N, P, self.num_keypoints, 3)
+        points = points[:, :, None, :].expand(-1, -1, self.num_keypoints, -1)
+
+        # Keypoints are relative to object center.
+        labels = gt_trans[:, None, :] + gt_keypoints # N x K x 3
+        # Predicted keypoints are relative to the point from which it is predicted.
+        y_hat = points + predicted_keypoints
+        labels = labels[:, None, :, :].expand(-1, P, -1, -1)
+
+        loss = torch.pow(y_hat - labels, 2).sum(dim=3).mean()
+        distances = torch.norm(y_hat - labels, 2, dim=3).mean()
+        return loss, distances
+

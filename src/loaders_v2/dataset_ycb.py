@@ -348,7 +348,7 @@ class YCB(Backend):
         gt_trans = np.squeeze(target_t + add_t, 0)
         unique_desig = (desig, obj_idx)
 
-        tup = tup + (gt_rot_wxyz, gt_trans, unique_desig)
+        tup = tup + (gt_rot_wxyz.astype(np.float32), gt_trans.astype(np.float32), unique_desig)
 
         return tup
 

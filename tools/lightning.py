@@ -38,9 +38,9 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 coloredlogs.install()
 
 # network dense fusion
-from lib.loss import Loss
+from lib.loss import KeypointLoss
 from lib.loss_refiner import Loss_refine
-from lib.network import PoseNet, PoseRefineNet
+from lib.network import KeypointNet, PoseRefineNet
 
 # dataset
 from loaders_v2 import GenericDataset
@@ -62,7 +62,7 @@ class TrackNet6D(LightningModule):
         self.test_size = 0.9
         self.env, self.exp = env, exp
 
-        self.estimator = PoseNet(
+        self.estimator = KeypointNet(
             num_points=exp['d_train']['num_points'],
             num_obj=exp['d_train']['objects'])
 
@@ -75,7 +75,7 @@ class TrackNet6D(LightningModule):
                 self.load_my_state_dict(state_dict)
 
         num_poi = exp['d_train']['num_pt_mesh_small']
-        self.criterion = Loss(num_poi, exp['d_train']['obj_list_sym'])
+        self.criterion = KeypointLoss(num_poi)
         num_poi = exp['d_train']['num_pt_mesh_large']
         self.criterion_refine = Loss_refine(
             num_poi, exp['d_train']['obj_list_sym'])
@@ -111,11 +111,8 @@ class TrackNet6D(LightningModule):
                 print('worked for ', name)
 
     def forward(self, img, points, choose, idx):
-
-        pred_r, pred_t, pred_c, emb = self.estimator(
+        return self.estimator(
             img, points, choose, idx)
-
-        return pred_r, pred_t, pred_c, emb
 
     def training_step(self, batch, batch_idx):
         total_loss = 0
@@ -126,14 +123,14 @@ class TrackNet6D(LightningModule):
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, choose, img, keypoints, model_points, idx,
+            (points, choose, img, gt_keypoints, model_points, idx,
                     depth_img, img_orig, cam,
                     gt_rot_wxyz, gt_trans, unique_desig) = frame
 
-            pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
+            predicted_keypoints, emb = self(img, points, choose, idx)
 
-            loss, dis, new_points, new_target = self.criterion(
-                pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
+            loss, dis = self.criterion(
+                predicted_keypoints, gt_keypoints, points, gt_trans)
             total_loss += loss
             total_dis += dis
         # choose correct loss here
@@ -152,14 +149,14 @@ class TrackNet6D(LightningModule):
                 continue
 
             # unpack the batch and apply forward pass
-            (points, choose, img, keypoints, model_points, idx,
+            (points, choose, img, gt_keypoints, model_points, idx,
                     depth_img, img_orig, cam,
                     gt_rot_wxyz, gt_trans, unique_desig) = frame
 
-            pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
+            predicted_keypoints, emb = self(img, points, choose, idx)
 
-            loss, dis, new_points, new_target = self.criterion(
-                pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
+            loss, dis = self.criterion(
+                predicted_keypoints, gt_keypoints, points, gt_trans)
 
             if f'val_loss' in self._dict_track.keys():
                 self._dict_track[f'val_loss'].append(
@@ -182,8 +179,8 @@ class TrackNet6D(LightningModule):
                     float(dis)]
 
             if self.number_images_log_val > self.counter_images_logged:
-                self.visu(batch_idx, pred_r, pred_t, pred_c, points,
-                          target, model_points, cam, img_orig, unique_desig)
+                # self.visu(batch_idx, pred_r, pred_t, pred_c, points,
+                #           target, model_points, cam, img_orig, unique_desig)
                 self.counter_images_logged += 1
 
             total_loss += loss
@@ -204,14 +201,14 @@ class TrackNet6D(LightningModule):
                 continue
 
             # unpack the batch and apply forward pass
-            (points, choose, img, keypoints, model_points, idx,
+            (points, choose, img, gt_keypoints, model_points, idx,
                     depth_img, img_orig, cam,
                     gt_rot_wxyz, gt_trans, unique_desig) = frame
 
-            pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
+            predicted_keypoints, emb = self(img, points, choose, idx)
 
-            loss, dis, new_points, new_target = self.criterion(
-                pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
+            loss, dis = self.criterion(
+                predicted_keypoints, gt_keypoints, points, gt_trans)  # wxy
 
             # self._dict_track is used to log hole epoch
             # add dis and loss to dict
@@ -237,8 +234,8 @@ class TrackNet6D(LightningModule):
                     float(dis)]
 
             if self.number_images_log_test > self.counter_images_logged:
-                self.visu(batch_idx, pred_r, pred_t, pred_c, points,
-                          target, model_points, cam, img_orig, unique_desig)
+                # self.visu(batch_idx, pred_r, pred_t, pred_c, points,
+                #           target, model_points, cam, img_orig, unique_desig)
                 self.counter_images_logged += 1
 
             total_loss += loss
