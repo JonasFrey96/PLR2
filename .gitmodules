@@ -1,0 +1,3 @@
+[submodule "labeling/libigl"]
+	path = labeling/libigl
+	url = https://github.com/libigl/libigl/
