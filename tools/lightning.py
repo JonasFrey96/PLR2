@@ -21,7 +21,6 @@ import coloredlogs
 import datetime
 
 sys.path.insert(0, os.getcwd())
-print(os.path.join(os.getcwd() + '/src'))
 sys.path.append(os.path.join(os.getcwd() + '/src'))
 sys.path.append(os.path.join(os.getcwd() + '/lib'))
 # src modules
@@ -49,18 +48,18 @@ from helper import re_quat, flatten_dict
 
 
 class TrackNet6D(LightningModule):
-    def __init__(self, exp, env):
+    def __init__(self, exp_cfg , env_cfg ):
         super().__init__()
 
         # logging h-params
-        exp_config_flatten = flatten_dict(exp.get_FullLoader())
+        exp_config_flatten = flatten_dict(copy.deepcopy( exp_cfg.get_FullLoader() ))
         for k in exp_config_flatten.keys():
             if exp_config_flatten[k] is None:
                 exp_config_flatten[k] = 'is None'
         self.hparams = exp_config_flatten
 
         self.test_size = 0.9
-        self.env, self.exp = env, exp
+        self.env, self.exp = env_cfg , exp_cfg
 
         self.estimator = PoseNet(
             num_points=exp['d_train']['num_points'],
@@ -82,6 +81,7 @@ class TrackNet6D(LightningModule):
 
         self.refine = False
         self.w = exp['w_normal']
+        self.w_decayed = False
 
         self.best_validation = 999
         self.best_validation_patience = 5
@@ -90,7 +90,7 @@ class TrackNet6D(LightningModule):
         self.Visu = None
         self._dict_track = {}
 
-        self.number_images_log_val = 5
+        self.number_images_log_val = -10
         self.number_images_log_test = 10
         self.counter_images_logged = 0
 
@@ -140,7 +140,7 @@ class TrackNet6D(LightningModule):
         # choose correct loss here
         total_loss = total_loss / l
         total_dis = total_dis / l
-        tensorboard_logs = {'train_loss': total_loss, 'train_dis': total_dis}
+        tensorboard_logs = {'train_loss': float(total_loss), 'train_dis': float(total_dis) }
         return {'loss': total_loss, 'dis': total_dis, 'log': tensorboard_logs, 'progress_bar': {'train_dis': total_dis, 'train_loss': total_loss}}
 
     def validation_step(self, batch, batch_idx):
@@ -190,8 +190,8 @@ class TrackNet6D(LightningModule):
             total_loss += loss
             total_dis += dis
 
-        tensorboard_logs = {'val_loss': total_loss /
-                            len(batch), 'val_dis': total_dis / len(batch)}
+        tensorboard_logs = {'val_loss': float( total_loss /
+                            len(batch)), 'val_dis': float(total_dis / len(batch))}
         return {'val_loss': total_loss / len(batch), 'val_dis': total_dis / len(batch), 'log': tensorboard_logs}
 
     def test_step(self, batch, batch_idx):
@@ -274,19 +274,25 @@ class TrackNet6D(LightningModule):
             self.best_validation_patience_run = 0
         else:
             self.best_validation_patience_run += 1
-            if self.best_validation_patience_run > self.best_validation_patience:
-                print("figure out how to set stop training flag")
+        #     if self.best_validation_patience_run > self.best_validation_patience:
+        #         print("figure out how to set stop training flag")
 
-        if avg_dict['avg_val_dis'] < self.early_stopping_value:
-            print("figure out how to set stop training flag")
+        # if avg_dict['avg_val_dis'] < self.early_stopping_value:
+        #     print("figure out how to set stop training flag")
+
+        if avg_dict['avg_val_dis'] < self.exp['decay_margin_start'] and not self.w_decayed:
+          self.w = self.exp['w_normal'] * self.exp['w_normal_rate']
+          self.w_decayed = True
+          print("w_rate decayed") 
+          
 
         self.counter_images_logged = 0  # reset image log counter
-
-        tensorboard_log = copy.deepcopy(avg_dict)
+        tensorboard_log = {}
         for k in avg_dict.keys():
+            tensorboard_log[k] = float( avg_dict[k] )
             avg_dict[k] = torch.tensor(
                 avg_dict[k], dtype=torch.float32, device=self.device)
-
+            
         return {**avg_dict, 'avg_val_dis_float': float(avg_dict['avg_val_dis']), 'log': tensorboard_log}
 
     def visu(self, batch_idx, pred_r, pred_t, pred_c, points, target, model_points, cam, img_orig, unique_desig):
@@ -406,7 +412,7 @@ def file_path(string):
 
 def read_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--exp', type=file_path, default='yaml/exp/exp_ws.yml',  # required=True,
+    parser.add_argument('--exp', type=file_path, default='yaml/exp/exp_load_and_fit.yml',  # required=True,
                         help='The main experiment yaml file.')
     parser.add_argument('--env', type=file_path, default='yaml/env/env_natrix_jonas.yml',
                         help='The environment yaml file.')
@@ -457,15 +463,10 @@ if __name__ == "__main__":
     shutil.copy(exp_cfg_path, f'{model_path}/{exp_cfg_fn}')
     shutil.copy(env_cfg_path, f'{model_path}/{env_cfg_fn}')
 
-    dic = {'exp': exp, 'env': env}
-    model = TrackNet6D(**dic)
-
     # default used by the Trainer
-    # TODO create one early stopping callback
-    # https://github.com/PyTorchLightning/pytorch-lightning/blob/63bd0582e35ad865c1f07f61975456f65de0f41f/pytorch_lightning/callbacks/base.py#L12
     early_stop_callback = EarlyStopping(
         monitor='avg_val_dis_float',
-        patience=exp.get('early_stopping_cfg', {}).get('patience', 10),
+        patience=exp.get('early_stopping_cfg', {}).get('patience', 100),
         strict=True,
         verbose=True,
         mode='min'
@@ -473,12 +474,19 @@ if __name__ == "__main__":
 
     # DEFAULTS used by the Trainer
     checkpoint_callback = ModelCheckpoint(
-        filepath=model_path,
+        filepath= exp['model_path']+'/{epoch}-{avg_val_dis:.4f}',
         verbose=True,
         monitor="avg_val_dis",
         mode="min",
         prefix="",
+        save_last=True, 
+        save_top_k=10,
     )
+    model = TrackNet6D(exp_cfg = exp, env_cfg = env)
+    
+    if exp.get('checkpoint_restore', False):
+      checkpoint = torch.load(exp['checkpoint_path'], map_location=lambda storage, loc: storage)
+      model.load_state_dict(checkpoint['state_dict'])
 
     trainer = Trainer(gpus=1,
                       num_nodes=1,
@@ -488,11 +496,23 @@ if __name__ == "__main__":
                       checkpoint_callback=checkpoint_callback,
                       early_stop_callback=early_stop_callback,
                       fast_dev_run=False,
-                      limit_train_batches=1.0,
+                      limit_train_batches=130000,
+                      limit_val_batches=5000,
                       limit_test_batches=1.0,
-                      limit_val_batches=1.0,
-                      val_check_interval=0.0,
+                      val_check_interval=1.0,
+                      progress_bar_refresh_rate= 0,
+                      max_epochs=100,
                       terminate_on_nan=True)
 
-    trainer.fit(model)
-    trainer.test(model)
+    if exp.get('model_mode', 'fit') == 'fit':
+      trainer.fit(model)
+    elif exp.get('model_mode', 'fit') == 'test' :
+      trainer.test(model)
+      if  exp.get('conv_test2df', False): 
+        command = 'cd scripts & python experiment2df.py %s --write-csv --write-pkl'%(model_path+'/lightning_logs/version_0' )  
+        os.system( command)
+    else:
+      print( "Wrong model_mode defined in exp config")
+      raise Exception
+
+
