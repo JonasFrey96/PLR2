@@ -40,7 +40,8 @@ _ymap = np.array([[i for i in range(640)] for j in range(480)])
 
 class ImageExtractor:
     def __init__(self, desig, obj_idx, p_ycb, img, depth, label, meta, num_points,
-                 pcd_to_cad):
+                 pcd_to_cad, ref):
+
         self.desig = desig
         self.obj_idx = obj_idx
         self.depth = depth
@@ -50,7 +51,7 @@ class ImageExtractor:
         self._pcd_to_cad = pcd_to_cad
         self.cam = self.get_camera(desig)
         self._num_pt = num_points
-
+        self._dataset_ref = ref
         self._compute_pose()
 
         # when less then this number of points are visble in the scene the frame is thrown away
@@ -147,8 +148,8 @@ class ImageExtractor:
         mask_back = ma.getmaskarray(ma.masked_equal(self.label, 0))
         if self.desig[:8] == 'data_syn':
             # this might lead to problems later because we also use test data as background. But for now at first it is fine
-            seed = random.choice(self._real)
-            back = np.array(self._trancolor(Image.open(
+            seed = random.choice(self._dataset_ref._real)
+            back = np.array(self._dataset_ref._trancolor(Image.open(
                 '{0}/{1}-color.png'.format(self._ycb_path, seed)).convert("RGB")))
             back = np.transpose(back, (2, 0, 1))[
                 :, self.rmin:self.rmax, self.cmin:self.cmax]
@@ -265,7 +266,7 @@ class YCB(Backend):
             img = self._trancolor(img)
 
         extractor = ImageExtractor(desig, obj_idx, self._ycb_path, img, depth, label, meta, self._num_pt,
-                                   self._pcd_cad_dict)
+                                   self._pcd_cad_dict, self)
 
         target_t = extractor.translation()
         target_r = extractor.rotation()
