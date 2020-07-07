@@ -337,6 +337,7 @@ class YCB(Backend):
         tup = (torch.from_numpy(cloud.astype(np.float32)),
             #    self._norm(torch.from_numpy(np.array(img).astype(np.float32))),
                torch.from_numpy(np.array(img).astype(np.float32)),
+               torch.from_numpy(label.astype(np.int)),
                torch.from_numpy(keypoint_vectors))
 
         if self._dataset_config['output_cfg']['add_depth_image']:
