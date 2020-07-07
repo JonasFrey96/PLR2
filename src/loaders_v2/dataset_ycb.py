@@ -57,7 +57,7 @@ def _read_keypoint_file(filepath):
 
 class ImageExtractor:
     def __init__(self, desig, obj_idx, p_ycb, img, depth, label, meta, num_points,
-                 pcd_to_cad):
+                 pcd_to_cad, keypoints=None):
         self.desig = desig
         self.obj_idx = obj_idx
         self.depth = depth
@@ -66,6 +66,7 @@ class ImageExtractor:
         self._ycb_path = p_ycb
         self._pcd_to_cad = pcd_to_cad
         self.cam = self.get_camera(desig)
+        self.keypoints = keypoints
 
         if obj_idx is not None:
             # when less then this number of points are visble in the scene the frame is thrown away, not used in the overall image mask calculation
@@ -208,15 +209,28 @@ class ImageExtractor:
         return model_points
 
     def keypoint_vectors(self):
-        num_keypoints = self.keypoints[0].shape[0]
+        num_keypoints = self.keypoints[1].shape[0]
         kv = [self.pcd]*num_keypoints ## number of keypoints - should be consistent from model to model!
-        for obj in np.unique(self.label):
-            mask_back = ma.getmaskarray(ma.masked_equal(self.label, 0))
+        object_set = set(np.unique(self.label).tolist())
+        object_set.remove(0)
+        for obj in object_set:
+            kp = self.keypoints[obj]
+            x_ind, y_ind = np.where(self.label==obj)
+            R, t = self._compute_pose(obj)
             for i in range(0, num_keypoints):
-                kp_vec = np.ones((480, 640, 3))
-
-            mask_back = ma.getmaskarray(ma.masked_equal(self.label, 0))
-        return kv
+                kp_vec = np.dot(R, kp[i,:].reshape(3,1)) + t.reshape(3,1)
+                kp_x = kv[i][:, :, 0]*-1 + kp_vec[0,0]
+                kp_y = kv[i][:, :, 1]*-1 + kp_vec[1,0]
+                kp_z = kv[i][:, :, 2]*-1 + kp_vec[2,0]
+                kv[i][x_ind,y_ind, 0] = kp_x[x_ind, y_ind]
+                kv[i][x_ind,y_ind, 1] = kp_y[x_ind, y_ind]
+                kv[i][x_ind,y_ind, 2] = kp_z[x_ind, y_ind]
+        x_back_ind, y_back_ind = np.where(self.label==0)
+        for i in range(0, num_keypoints):
+            kv[i][x_back_ind, y_back_ind, 0] = 0
+            kv[i][x_back_ind, y_back_ind, 1] = 0
+            kv[i][x_back_ind, y_back_ind, 2] = 0
+        return np.dstack(kv)
 
 class YCB(Backend):
     def __init__(self, cfg_d, cfg_env):
@@ -303,7 +317,7 @@ class YCB(Backend):
         # if self._dataset_config['noise_cfg'].get('motion_blur', False) and desig[:8]=='data_syn':
         
         extractor = ImageExtractor(desig, None, self._ycb_path, img, depth, label, meta, self._num_pt,
-                                self._pcd_cad_dict)
+                                self._pcd_cad_dict, self._keypoints)
 
         cloud = extractor.pcd
         cam = extractor.cam
