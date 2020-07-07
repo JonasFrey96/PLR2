@@ -1,7 +1,7 @@
 from helper import compose_quat, rotation_angle, re_quat
 from torch.autograd import Variable
 import cv2
-import pcl
+# import pcl
 import torchvision.utils as vutils
 import torchvision.transforms as transforms
 import torchvision.datasets as dset
@@ -210,26 +210,26 @@ class ImageExtractor:
 
     def keypoint_vectors(self):
         num_keypoints = self.keypoints[1].shape[0]
-        kv = [self.pcd]*num_keypoints ## number of keypoints - should be consistent from model to model!
+        kv = []
+        for i in range(0,8):
+            kv.append(np.copy(self.pcd))
         object_set = set(np.unique(self.label).tolist())
         object_set.remove(0)
         for obj in object_set:
             kp = self.keypoints[obj]
             x_ind, y_ind = np.where(self.label==obj)
+            mask_obj = np.dstack([(self.label==obj)]*3)
             R, t = self._compute_pose(obj)
             for i in range(0, num_keypoints):
                 kp_vec = np.dot(R, kp[i,:].reshape(3,1)) + t.reshape(3,1)
                 kp_x = kv[i][:, :, 0]*-1 + kp_vec[0,0]
                 kp_y = kv[i][:, :, 1]*-1 + kp_vec[1,0]
                 kp_z = kv[i][:, :, 2]*-1 + kp_vec[2,0]
-                kv[i][x_ind,y_ind, 0] = kp_x[x_ind, y_ind]
-                kv[i][x_ind,y_ind, 1] = kp_y[x_ind, y_ind]
-                kv[i][x_ind,y_ind, 2] = kp_z[x_ind, y_ind]
-        x_back_ind, y_back_ind = np.where(self.label==0)
+                kp_cld = np.dstack((kp_x, kp_y, kp_z))
+                kv[i][mask_obj] = kp_cld[mask_obj]
+        mask_back = np.dstack([(self.label==0)]*3)
         for i in range(0, num_keypoints):
-            kv[i][x_back_ind, y_back_ind, 0] = 0
-            kv[i][x_back_ind, y_back_ind, 1] = 0
-            kv[i][x_back_ind, y_back_ind, 2] = 0
+            kv[i][mask_back] = 0
         return np.dstack(kv)
 
 class YCB(Backend):
@@ -335,12 +335,12 @@ class YCB(Backend):
         # cloud = np.add(cloud, add_t)
 
         tup = (torch.from_numpy(cloud.astype(np.float32)),
-               torch.LongTensor(choose.astype(np.int32)),
-               self._norm(torch.from_numpy(img.astype(np.float32))),
+            #    self._norm(torch.from_numpy(np.array(img).astype(np.float32))),
+               torch.from_numpy(np.array(img).astype(np.float32)),
                torch.from_numpy(keypoint_vectors))
 
         if self._dataset_config['output_cfg']['add_depth_image']:
-            tup += tuple(depth)
+            tup += (torch.from_numpy(depth),)
         else:
             tup += tuple([0])
 
@@ -355,10 +355,7 @@ class YCB(Backend):
         else:
             tup += (0, 0)
 
-        unique_desig = (desig)
-
-        tup = tup + (unique_desig)
-
+        tup += ((desig),)
         return tup
 
     def getElement(self, desig, obj_idx):
