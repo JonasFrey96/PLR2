@@ -35,4 +35,13 @@ def solve_transform(keypoints, gt_keypoints):
 
     return T
 
+def compute_points(points, predicted_keypoints):
+    """
+    points: N x P x 3 depth points
+    predicted_keypoints: N x P x K x 3 keypoint predictions - one for each point and keypoint.
+    return: N x P x K x 3 keypoints in world space
+    """
+    N, P, K, _ = predicted_keypoints.shape
+    points = points[:, :, None, :].expand(-1, -1, K, -1)
+    return points + predicted_keypoints
 

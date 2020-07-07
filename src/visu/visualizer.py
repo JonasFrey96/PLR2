@@ -10,6 +10,28 @@ import torch
 import numpy as np
 import k3d
 
+KEYPOINT_COLORS = np.array([
+    [  0,   0, 127],
+    [  0,   0, 255],
+    [  0, 128, 255],
+    [ 21, 255, 225],
+    [124, 255, 121],
+    [228, 255,  18],
+    [255, 148,   0],
+    [255,  29,   0]], dtype=np.uint8)
+
+def project_points(points, cam_cx, cam_cy, cam_fx, cam_fy):
+    """
+    points: P x 3
+    returns: P x 2 in image cordinates
+    """
+    out = np.zeros((points.shape[0], 2), dtype=np.int32)
+    p_x = points[:, 0]
+    p_y = points[:, 1]
+    p_z = points[:, 2]
+    out[:, 0] = (p_x / p_z * cam_fx + cam_cx).astype(np.int32)
+    out[:, 1] = (p_y / p_z * cam_fy + cam_cy).astype(np.int32)
+    return out
 
 class Visualizer():
     def __init__(self, p_visu, writer=None):
@@ -21,9 +43,54 @@ class Visualizer():
         if not os.path.exists(self.p_visu):
             os.makedirs(self.p_visu)
 
+    def plot_keypoints(self, tag, epoch, img, keypoints, store=False,
+            cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, w=2):
+        """
+        Project keypoints onto the image and save it. Each keypoint will have it's own color.
+        """
+        img = img.copy()
+        projected = project_points(keypoints, cam_cx, cam_cy, cam_fx, cam_fy)
+        for i in range(projected.shape[0]):
+            u, v = projected[i, :]
+            color = KEYPOINT_COLORS[i]
+            try:
+                img[v - w:v + w + 1, u - w:u + w + 1, :] = color
+            except IndexError:
+                pass
+        if store:
+            save_image(img, tag="epoch_{epoch}_{tag}".format(epoch=epoch, tag=tag),
+                    p_store=self.p_visu)
+        if self.writer is not None:
+            self.writer.add_image(tag, img, global_step=epoch, dataformats="HWC")
+
+    def plot_predicted_keypoints(self, tag, epoch, img, keypoints, store=True,
+            cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, w=1):
+        """
+        Project keypoints onto image (as plot_keypoints) but for predictions, where
+        one point is drawn for each prediction.
+
+        keypoints: P x K x 3
+        """
+        img = img.copy()
+        P, K, _ = keypoints.shape
+        for p in range(P):
+            projected = project_points(keypoints[0], cam_cx, cam_cy, cam_fx, cam_fy)
+            for i in range(K):
+                u, v = projected[i, :]
+                color = KEYPOINT_COLORS[i]
+                try:
+                    img[v - w:v + w + 1, u - w:u + w + 1, :] = color
+                except IndexError:
+                    print("Predicted keypoint out of bounds.")
+        if store:
+            save_image(img, tag="epoch_{epoch}_{tag}".format(epoch=epoch, tag=tag),
+                    p_store=self.p_visu)
+        if self.writer is not None:
+            self.writer.add_image(tag, img, global_step=epoch, dataformats="HWC")
+
     def plot_estimated_pose(self, tag, epoch, img, points, trans=[[0, 0, 0]], rot_mat=[[1, 0, 0], [0, 1, 0], [0, 0, 1]], cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, store=False, jupyter=False, w=2):
         """
-        tag := tensorboard tag 
+        tag := tensorboard tag
         epoch := tensorboard epoche
         store := ture -> stores the image to standard path
         path := != None creats the path and store to it path/tag.png
@@ -36,17 +103,14 @@ class Visualizer():
         img_d = copy.deepcopy(img)
         points = np.dot(points, rot_mat.T)
         points = np.add(points, trans[0, :])
+        projected = project_points(points, cam_cx, cam_cy, cam_fx, cam_fy)
         for i in range(0, points.shape[0]):
-            p_x = points[i, 0]
-            p_y = points[i, 1]
-            p_z = points[i, 2]
-            u = int(((p_x / p_z) * cam_fx) + cam_cx)
-            v = int(((p_y / p_z) * cam_fy) + cam_cy)
+            u, v = projected[i]
             try:
                 img_d[v - w:v + w + 1, u - w:u + w + 1, 0] = 0
                 img_d[v - w:v + w + 1, u - w:u + w + 1, 1] = 255
                 img_d[v - w:v + w + 1, u - w:u + w + 1, 0] = 0
-            except:
+            except IndexError:
                 #print("out of bounce")
                 pass
 
@@ -63,7 +127,7 @@ class Visualizer():
 
     def plot_bounding_box(self, tag, epoch, img, rmin=0, rmax=0, cmin=0, cmax=0, str_width=2, store=False, jupyter=False, b=None):
         """
-        tag := tensorboard tag 
+        tag := tensorboard tag
         epoch := tensorboard epoche
         store := ture -> stores the image to standard path
         path := != None creats the path and store to it path/tag.png
