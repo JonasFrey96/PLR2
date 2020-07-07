@@ -26,3 +26,6 @@ class Backend(data.Dataset):
 
     def getElement(self, desig, obj_idx):
         pass
+
+    def getFullImage(self, desig):
+        pass

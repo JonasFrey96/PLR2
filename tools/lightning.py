@@ -483,7 +483,7 @@ if __name__ == "__main__":
                       default_root_dir=model_path,
                       checkpoint_callback=checkpoint_callback,
                       early_stop_callback=early_stop_callback,
-                      fast_dev_run=False,
+                      fast_dev_run=True,
                       limit_train_batches=1.0,
                       limit_test_batches=1.0,
                       limit_val_batches=1.0,

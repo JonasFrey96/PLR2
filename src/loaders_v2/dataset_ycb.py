@@ -1,5 +1,7 @@
 from helper import compose_quat, rotation_angle, re_quat
 from torch.autograd import Variable
+import cv2
+import pcl
 import torchvision.utils as vutils
 import torchvision.transforms as transforms
 import torchvision.datasets as dset
@@ -64,35 +66,44 @@ class ImageExtractor:
         self._ycb_path = p_ycb
         self._pcd_to_cad = pcd_to_cad
         self.cam = self.get_camera(desig)
-        self._num_pt = num_points
 
-        self._compute_pose()
-
-        # when less then this number of points are visble in the scene the frame is thrown away
-        self._minimum_num_pt = 50
-        self.valid = self._compute_mask()
-        if self.valid:
-
-            self._compute_choose()
-            self.img = self._crop_image(img)
+        if obj_idx is not None:
+            # when less then this number of points are visble in the scene the frame is thrown away, not used in the overall image mask calculation
+            self._num_pt = num_points
+            self._minimum_num_pt = 50
+            self.valid = self._compute_mask()
+            if self.valid:
+                self._compute_choose()
+                self.img = self._crop_image(img)
+        else:
+            self.rmin = 0
+            self.rmax = 480
+            self.cmin = 0
+            self.cmax = 640
+            self._choose = np.full((480, 640), True).flatten()
+            self.img = img
+            self.pcd = self.pointcloud_layered()
 
     def _crop_image(self, img):
         # cropping the image
         return np.transpose(np.array(img)[:, :, :3], (2, 0, 1))[
             :, self.rmin:self.rmax, self.cmin:self.cmax]
 
-    def _compute_pose(self):
+    def _compute_pose(self, obj_idx):
         obj = self.meta['cls_indexes'].flatten().astype(np.int32)
 
-        obj_idx_in_list = int(np.argwhere(obj == self.obj_idx))
-        self.R = self.meta['poses'][:, :, obj_idx_in_list][:, 0:3]
-        self.t = np.array(
-            [self.meta['poses'][:, :, obj_idx_in_list][:, 3:4].flatten()])
+        obj_idx_in_list = int(np.argwhere(obj == obj_idx))
+        R = self.meta['poses'][:, :, obj_idx_in_list][:, 0:3]
+        t = np.array([self.meta['poses'][:, :, obj_idx_in_list][:, 3:4].flatten()])
+        return R, t
 
     def _compute_mask(self):
         mask_depth = ma.getmaskarray(ma.masked_not_equal(self.depth, 0))
-        mask_label = ma.getmaskarray(ma.masked_equal(self.label, self.obj_idx))
-        self._mask = mask_label * mask_depth
+        if self.obj_idx is not None:
+            mask_label = ma.getmaskarray(ma.masked_equal(self.label, self.obj_idx))
+            self._mask = mask_label * mask_depth
+        else:
+            self._mask = mask_depth
 
         if len(self._mask.nonzero()[0]) <= self._minimum_num_pt:
             return False
@@ -132,14 +143,15 @@ class ImageExtractor:
         pt1 = (xmap_masked - self.cam[1]) * pt2 / self.cam[3]
         return np.concatenate((pt0, pt1, pt2), axis=1)
 
+    def pointcloud_layered(self):
+        cam_scale = self.meta['factor_depth'][0][0]
+        pt2 = self.depth / cam_scale
+        pt0 = (_ymap - self.cam[0]) * pt2 / self.cam[2]
+        pt1 = (_xmap - self.cam[1]) * pt2 / self.cam[3]
+        return np.dstack((pt0, pt1, pt2))
+
     def choose(self):
         return np.array([self._choose])
-
-    def translation(self):
-        return self.t
-
-    def rotation(self):
-        return self.R
 
     def get_camera(self, desig):
         """
@@ -195,6 +207,16 @@ class ImageExtractor:
             self._pcd_to_cad[self.obj_idx], dellist, axis=0)
         return model_points
 
+    def keypoint_vectors(self):
+        num_keypoints = self.keypoints[0].shape[0]
+        kv = [self.pcd]*num_keypoints ## number of keypoints - should be consistent from model to model!
+        for obj in np.unique(self.label):
+            mask_back = ma.getmaskarray(ma.masked_equal(self.label, 0))
+            for i in range(0, num_keypoints):
+                kp_vec = np.ones((480, 640, 3))
+
+            mask_back = ma.getmaskarray(ma.masked_equal(self.label, 0))
+        return kv
 
 class YCB(Backend):
     def __init__(self, cfg_d, cfg_env):
@@ -211,6 +233,119 @@ class YCB(Backend):
 
         self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
         self._front_num = 2
+
+    def getFullImage(self, desig):
+        """
+        Desig: sequence/idx
+        Gets the full image.
+        """
+        try:
+            img = Image.open(
+                '{0}/{1}-color.png'.format(self._ycb_path, desig))
+            depth = np.array(Image.open(
+                '{0}/{1}-depth.png'.format(self._ycb_path, desig)))
+            label = np.array(Image.open(
+                '{0}/{1}-label.png'.format(self._ycb_path, desig)))
+            meta = scio.loadmat(
+                '{0}/{1}-meta.mat'.format(self._ycb_path, desig))
+
+        except FileNotFoundError:
+            logging.error(
+                'cant find files for {0}/{1}'.format(self._ycb_path, desig))
+            return False
+
+        if self._dataset_config['output_cfg']['visu']['return_img']:
+            img_copy = np.array(img.convert("RGB"))
+
+        # what is this doing again
+        add_front = False
+
+        # TODO add here correct way to load noise
+        if self._dataset_config['noise_cfg']['status']:
+            for k in range(5):
+
+                seed = random.choice(self._syn)
+
+                front = np.array(self._trancolor(Image.open(
+                    '{0}/{1}-color.png'.format(self._ycb_path, desig)).convert("RGB")))
+
+                front = np.transpose(front, (2, 0, 1))
+                f_label = np.array(Image.open(
+                    '{0}/{1}-label.png'.format(self._ycb_path, seed)))
+
+                front_label = np.unique(f_label).tolist()[1:]
+                if len(front_label) < self._front_num:
+                    continue
+                front_label = random.sample(front_label, self._front_num)
+                for f_i in front_label:
+                    mk = ma.getmaskarray(ma.masked_not_equal(f_label, f_i))
+                    if f_i == front_label[0]:
+                        mask_front = mk
+                    else:
+                        mask_front = mask_front * mk
+
+                t_label = label * mask_front
+                if len(t_label.nonzero()[0]) > 1000:
+                    label = t_label
+                    add_front = True
+                    break
+
+        if self._dataset_config['noise_cfg']['status']:
+            add_t = np.array(
+                [random.uniform(-self._dataset_config['noise_cfg']['noise_trans'], self._dataset_config['noise_cfg']['noise_trans']) for i in range(3)])
+        else:
+            add_t = np.zeros(3)
+
+        # take the noise color image
+        if self._dataset_config['noise_cfg']['status']:
+            img = self._trancolor(img)
+
+        # if self._dataset_config['noise_cfg'].get('motion_blur', False) and desig[:8]=='data_syn':
+        
+        extractor = ImageExtractor(desig, None, self._ycb_path, img, depth, label, meta, self._num_pt,
+                                self._pcd_cad_dict)
+
+        cloud = extractor.pcd
+        cam = extractor.cam
+
+        keypoint_vectors = extractor.keypoint_vectors()
+
+        # if self._dataset_config['noise_cfg']['status'] and add_front:
+        #     img_masked = img_masked * mask_front[rmin:rmax, cmin:cmax] + \
+        #         front[:, rmin:rmax, cmin:cmax] * \
+        #         ~(mask_front[rmin:rmax, cmin:cmax])
+
+        # if desig[:8] == 'data_syn':
+        #     img_masked = img_masked + np.random.normal(loc=0.0, scale=7.0, size=img_masked.shape)
+
+        # cloud = np.add(cloud, add_t)
+
+        tup = (torch.from_numpy(cloud.astype(np.float32)),
+               torch.LongTensor(choose.astype(np.int32)),
+               self._norm(torch.from_numpy(img.astype(np.float32))),
+               torch.from_numpy(keypoint_vectors))
+
+        if self._dataset_config['output_cfg']['add_depth_image']:
+            tup += tuple(depth)
+        else:
+            tup += tuple([0])
+
+        if self._dataset_config['output_cfg']['visu']['status']:
+            # append visu information
+            if self._dataset_config['output_cfg']['visu']['return_img']:
+                info = (img_copy, cam)
+            else:
+                info = (0, cam)
+
+            tup += (info)
+        else:
+            tup += (0, 0)
+
+        unique_desig = (desig)
+
+        tup = tup + (unique_desig)
+
+        return tup
 
     def getElement(self, desig, obj_idx):
         """
@@ -284,16 +419,17 @@ class YCB(Backend):
         extractor = ImageExtractor(desig, obj_idx, self._ycb_path, img, depth, label, meta, self._num_pt,
                                    self._pcd_cad_dict)
 
-        target_t = extractor.translation()
-        target_r = extractor.rotation()
-        gt_rot_wxyz = re_quat(
-            R.from_matrix(target_r).as_quat(), 'xyzw')
+        target_r, target_t = extractor.compute_pose(obj_idx)
+        gt_rot_wxyz = re_quat(R.from_matrix(target_r).as_quat(), 'xyzw')
         gt_trans = np.squeeze(target_t + add_t, 0)
         unique_desig = (desig, obj_idx)
 
         # less then min_num_points are visible in the scene of the object
         if not extractor.valid:
             return (False, gt_rot_wxyz, gt_trans, unique_desig)
+
+        # if self._dataset_config['noise_cfg'].get('motion_blur', False) and desig[:8]=='data_syn':
+
 
         cloud = extractor.pointcloud()
         choose = extractor.choose()
@@ -352,6 +488,46 @@ class YCB(Backend):
 
         return tup
 
+    def add_linear_motion_blur(self, img):
+        ## Code adapted from He. at al (github user ethnhe):
+        ## authors of "PVN3D: A Deep Point-wise 3D Keypoints Voting Network for 6DoF Pose Estimation, CVPR 2020."
+        ## code available at https://github.com/ethnhe/PVN3D
+        ## MIT licence applies.
+        r_angle = np.deg2rad(np.random.randint(0, self._dataset_cfg))
+        length = np.random.rand()*15+1
+
+        dx = np.cos(r_angle)
+        dy = np.sin(r_angle)
+        a = int(max(list(map(abs, (dx, dy)))) * length * 2)
+        if a <= 0:
+            return img
+        kern = np.zeros((a, a))
+        cx, cy = a // 2, a // 2
+        dx, dy = list(map(int, (dx * length + cx, dy * length + cy)))
+        cv2.line(kern, (cx, cy), (dx, dy), 1.0)
+        s = kern.sum()
+        if s == 0:
+            kern[cx, cy] = 1.0
+        else:
+            kern /= s
+        return cv2.filter2D(img, -1, kern)
+
+    def get_normal(self, cld):
+        """Taken from He. at al (github user ethnhe):
+        Authors of "PVN3D: A Deep Point-wise 3D Keypoints Voting Network for 6DoF Pose Estimation, CVPR 2020."
+        Code available at https://github.com/ethnhe/PVN3D
+        MIT licence applies."""
+        cloud = pcl.PointCloud()
+        cld = cld.astype(np.float32)
+        cloud.from_array(cld)
+        ne = cloud.make_NormalEstimation()
+        kdtree = cloud.make_kdtree()
+        ne.set_SearchMethod(kdtree)
+        ne.set_KSearch(50)
+        n = ne.compute()
+        n = n.to_array()
+        return n
+
     def get_desig(self, path):
         desig = []
         with open(path) as f:
@@ -379,7 +555,7 @@ class YCB(Backend):
                     seq_list.append(seq_info)
         else:
             # this method assumes that the desig list is sorted correctly
-            # only adds synthetic data if present in desig list if fixed lendth = false
+            # only adds synthetic data if present in desig list if fixed length = false
 
             seq_list = []
             # used frames keep max length to 10000 d+str(o) is the content

@@ -1,5 +1,6 @@
 from loaders_v2 import YCB, Laval, Backend
 import random
+import numpy as np
 
 class GenericDataset():
 
@@ -18,6 +19,16 @@ class GenericDataset():
         self._batch_list = self._backend._batch_list
         self._force_one_object_visible = cfg_d['output_cfg'].get('force_one_object_visible', False)
 
+        batch_list_tmp = []
+        if self._backend._dataset_config.get('all_objects', False):
+            if self._backend._dataset_config['batch_list_cfg']['seq_length'] > 1:
+                raise Exception('If all_objects is TRUE then batch_list_cfg/seq_length must be 1.')
+            for i in self._batch_list:
+                entry = (str(i[1])+i[2][0])
+                batch_list_tmp.append(entry)
+            batch_list_uniq, indexes = np.unique(np.array(batch_list_tmp), return_index=True)
+            self._backend._batch_list = np.array(self._batch_list)[indexes,:].tolist()
+            self._batch_list = self._backend._batch_list
 
         if self._obj_list_fil is not None:
             self._batch_list = [
@@ -66,17 +77,23 @@ class GenericDataset():
     def __getitem__(self, index):
         seq = []
         one_object_visible = False
-        # iterate over a sequence specified in the batch list
-        for k in self._batch_list[index][2]:
-            # each batch_list entry has the form [obj_name, obj_full_path, index_list]
+        if self._backend._dataset_config.get('all_objects', False):
+            # get the full image if specified for certain traiing tasks
+            k = self._batch_list[index][2][0]
             num = '0' * int(6 - len(str(k))) + str(k)
-            seq.append(self._backend.getElement(
-                desig=f'{self._batch_list[index][1]}/{num}', obj_idx=self._batch_list[index][0]))
-            if not isinstance(seq[-1][0],bool):
-              one_object_visible = True
+            seq.append(self._backend.getFullImage(desig=f'{self._batch_list[index][1]}/{num}'))
+        else:
+            # iterate over a sequence specified in the batch list
+            for k in self._batch_list[index][2]:
+                # each batch_list entry has the form [obj_name, obj_full_path, index_list]
+                num = '0' * int(6 - len(str(k))) + str(k)
+                seq.append(self._backend.getElement(
+                    desig=f'{self._batch_list[index][1]}/{num}', obj_idx=self._batch_list[index][0]))
+                if not isinstance(seq[-1][0],bool):
+                    one_object_visible = True
 
-        if self._force_one_object_visible and one_object_visible == False:
-          rand = random.randrange(0, len(self))
-          return self[int(rand)]
+            if self._force_one_object_visible and one_object_visible == False:
+                rand = random.randrange(0, len(self))
+                return self[int(rand)]
 
         return seq
