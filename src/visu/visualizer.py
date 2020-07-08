@@ -43,25 +43,34 @@ class Visualizer():
         if not os.path.exists(self.p_visu):
             os.makedirs(self.p_visu)
 
-    def plot_keypoints(self, tag, epoch, img, keypoints, store=False,
+    def plot_keypoints(self, tag, epoch, img, points, keypoints, label, object_ids, store=False,
             cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, w=2):
         """
         Project keypoints onto the image and save it. Each keypoint will have it's own color.
         """
-        img = img.copy()
-        projected = project_points(keypoints, cam_cx, cam_cy, cam_fx, cam_fy)
-        for i in range(projected.shape[0]):
-            u, v = projected[i, :]
-            color = KEYPOINT_COLORS[i]
-            try:
-                img[v - w:v + w + 1, u - w:u + w + 1, :] = color
-            except IndexError:
-                pass
-        if store:
-            save_image(img, tag="epoch_{epoch}_{tag}".format(epoch=epoch, tag=tag),
-                    p_store=self.p_visu)
-        if self.writer is not None:
-            self.writer.add_image(tag, img, global_step=epoch, dataformats="HWC")
+        H, W, K3 = keypoints.shape
+        K = K3 // 3
+        keypoints = points[:, :, None, :] + keypoints.reshape(H, W, K, 3)
+        for object_index in object_ids:
+            local_image = img.copy()
+            mask = label == object_index
+            object_keypoints = keypoints[mask, :].reshape(-1, 3)
+            projected = project_points(object_keypoints, cam_cx, cam_cy, cam_fx, cam_fy)
+            projected = projected.reshape(-1, K, 2)
+            for p in range(projected.shape[0]):
+                for i in range(K):
+                    u, v = projected[p, i, :]
+                    color = KEYPOINT_COLORS[i]
+                    # try:
+                    local_image[v - w:v + w + 1, u - w:u + w + 1, :] = color
+                    # except IndexError:
+                    #     pass
+            image_tag = tag + f"_obj{object_index}"
+            if store:
+                save_image(local_image, tag=f"epoch_{epoch}_{image_tag}",
+                        p_store=self.p_visu)
+            if self.writer is not None:
+                self.writer.add_image(image_tag, local_image, global_step=epoch, dataformats="HWC")
 
     def plot_predicted_keypoints(self, tag, epoch, img, keypoints, store=True,
             cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, w=1):
@@ -118,8 +127,6 @@ class Visualizer():
             display(Image.fromarray(img_d))
 
         if store:
-            #store_ar = (img_d* 255).round().astype(np.uint8)
-            #print("IMAGE D:" ,img_d,img_d.shape )
             save_image(img_d, tag=str(epoch) + tag, p_store=self.p_visu)
         if self.writer is not None:
             self.writer.add_image(tag, img_d.astype(

@@ -83,7 +83,7 @@ class TrackNet6D(LightningModule):
         self.best_validation_patience = 5
         self.early_stopping_value = 0.1
 
-        self.Visu = None
+        self.visualizer = None
         self._dict_track = {}
 
         self.number_images_log_val = 5
@@ -119,14 +119,19 @@ class TrackNet6D(LightningModule):
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, choose, img, gt_keypoints, model_points, idx,
-                    depth_img, img_orig, cam,
-                    gt_rot_wxyz, gt_trans, unique_desig) = frame
+            (points, img, label, keypoints, depth_img, object_ids,
+                    img_orig, cam, unique_desig) = frame
 
-            predicted_keypoints, emb = self(img, points, choose, idx)
+            # (points, choose, img, gt_keypoints, model_points, idx,
+            #         depth_img, img_orig, cam,
+            #         gt_rot_wxyz, gt_trans, unique_desig) = frame
 
-            loss, dis = self.criterion(
-                predicted_keypoints, gt_keypoints, points, gt_trans)
+            # predicted_keypoints, emb = self(img, points, choose, idx)
+
+            # loss, dis = self.criterion(
+            #     predicted_keypoints, gt_keypoints, points, gt_trans)
+            loss = torch.zeros(1, requires_grad=True)
+            dis = torch.zeros(1, requires_grad=True)
             total_loss += loss
             total_dis += dis
         # choose correct loss here
@@ -144,15 +149,16 @@ class TrackNet6D(LightningModule):
             if frame[0].dtype == torch.bool:
                 continue
 
-            # unpack the batch and apply forward pass
-            (points, choose, img, gt_keypoints, model_points, idx,
-                    depth_img, img_orig, cam,
-                    gt_rot_wxyz, gt_trans, unique_desig) = frame
+            (points, img, label, gt_keypoints, depth_img, object_ids,
+                    img_orig, cam, unique_desig) = frame
 
-            predicted_keypoints, emb = self(img, points, choose, idx)
+            # predicted_keypoints, emb = self(img, points, choose, idx)
+            predicted_keypoints = None
+            loss = torch.zeros(1, requires_grad=True)
+            dis = torch.zeros(1, requires_grad=True)
 
-            loss, dis = self.criterion(
-                predicted_keypoints, gt_keypoints, points, gt_trans)
+            # loss, dis = self.criterion(
+            #     predicted_keypoints, gt_keypoints, points, gt_trans)
 
             if f'val_loss' in self._dict_track.keys():
                 self._dict_track[f'val_loss'].append(
@@ -163,20 +169,8 @@ class TrackNet6D(LightningModule):
                 self._dict_track[f'val_loss'] = [float(loss)]
                 self._dict_track[f'val_dis'] = [float(dis)]
 
-            if f'val_{int(unique_desig[1])}_loss' in self._dict_track.keys():
-                self._dict_track[f'val_{int(unique_desig[1])}_loss'].append(
-                    float(loss))
-                self._dict_track[f'val_{int(unique_desig[1])}_dis'].append(
-                    float(dis))
-            else:
-                self._dict_track[f'val_{int(unique_desig[1])}_loss'] = [
-                    float(loss)]
-                self._dict_track[f'val_{int(unique_desig[1])}_dis'] = [
-                    float(dis)]
-
             if self.number_images_log_val > self.counter_images_logged:
-                self.visu(batch_idx, predicted_keypoints, points,
-                          gt_keypoints, gt_rot_wxyz, gt_trans, model_points, cam, img_orig, unique_desig)
+                self.visualize(batch_idx, predicted_keypoints, points, label, object_ids, gt_keypoints, cam, img_orig, unique_desig)
                 self.counter_images_logged += 1
 
             total_loss += loss
@@ -217,21 +211,8 @@ class TrackNet6D(LightningModule):
                 self._dict_track[f'test_loss'] = [float(loss)]
                 self._dict_track[f'test_dis'] = [float(dis)]
 
-            # add all object losses individual to dataframe
-            if f'test_{int(unique_desig[1])}_loss' in self._dict_track.keys():
-                self._dict_track[f'test_{int(unique_desig[1])}_loss'].append(
-                    float(loss))
-                self._dict_track[f'test_{int(unique_desig[1])}_dis'].append(
-                    float(dis))
-            else:
-                self._dict_track[f'test_{int(unique_desig[1])}_loss'] = [
-                    float(loss)]
-                self._dict_track[f'test_{int(unique_desig[1])}_dis'] = [
-                    float(dis)]
-
             if self.number_images_log_test > self.counter_images_logged:
-                self.visu(batch_idx, predicted_keypoints, points,
-                          gt_keypoints, gt_rot_wxyz, gt_trans, model_points, cam, img_orig, unique_desig)
+                self.visualize(batch_idx, predicted_keypoints, points, label, gt_keypoints, cam, img_orig, unique_desig)
                 self.counter_images_logged += 1
 
             total_loss += loss
@@ -281,40 +262,38 @@ class TrackNet6D(LightningModule):
 
         return {**avg_dict, 'avg_val_dis_float': float(avg_dict['avg_val_dis']), 'log': tensorboard_log}
 
-    def visu(self, batch_idx, predicted_keypoints, points, gt_keypoints, gt_rot_wxyz, gt_translation, model_points, cam, img_orig, unique_desig):
-        if self.Visu is None:
-            self.Visu = Visualizer(exp['model_path'] +
-                                   '/visu/', self.logger.experiment)
+    def visualize(self, batch_idx, predicted_keypoints, points, label, object_ids,
+            gt_keypoints, cam, img_orig, unique_desig):
+        if self.visualizer is None:
+            self.visualizer = Visualizer(os.path.join(exp['model_path'], 'visu'), self.logger.experiment)
 
         random_index = np.random.randint(0, points.shape[0])
-        gt_keypoints = gt_keypoints[random_index].detach().cpu().numpy()
-        rot = gt_rot_wxyz[random_index].detach().cpu().numpy()
-        rot = R.from_quat([rot[1], rot[2], rot[3], rot[0]])
-        gt_keypoints = rot.apply(gt_keypoints)
-        gt_keypoints = gt_translation[random_index, None, :].detach().cpu().numpy() + gt_keypoints
-        self.Visu.plot_keypoints(tag='ground_truth_%s_obj%d' % (str(unique_desig[0][random_index]).replace('/', "_"), int(unique_desig[1][random_index])),
+        self.visualizer.plot_keypoints(tag='ground_truth_{}'.format(str(unique_desig[random_index]).replace('/', "_")),
             epoch=self.current_epoch,
-            img=img_orig[random_index, :, :, :].detach().cpu().numpy(),
-            keypoints=gt_keypoints,
+            img=img_orig[random_index, :, :, :].cpu().numpy(),
+            points=points[random_index].cpu().numpy(),
+            keypoints=gt_keypoints[random_index].cpu().numpy(),
+            label=label[random_index].cpu().numpy(),
+            object_ids=object_ids[random_index].cpu().numpy(),
             cam_cx=float(cam[random_index, 0]),
             cam_cy=float(cam[random_index, 1]),
             cam_fx=float(cam[random_index, 2]),
             cam_fy=float(cam[random_index, 3]),
             store=True)
 
-        K = gt_keypoints.shape[0]
-        N, P, _ = predicted_keypoints.shape
-        predicted_keypoints = predicted_keypoints.reshape(N, P, K, 3)
-        keypoints = kp_helper.compute_points(points[random_index][None], predicted_keypoints[random_index][None])
-        self.Visu.plot_predicted_keypoints(tag='predicted_{}_obj{}'.format(unique_desig[0][random_index].replace('/', '_'), unique_desig[1][random_index]),
-                epoch=self.current_epoch,
-                img=img_orig[random_index, :, :, :].detach().cpu().numpy(),
-                keypoints=keypoints[0].detach().cpu().numpy(),
-                cam_cx=cam[random_index, 0].item(),
-                cam_cy=cam[random_index, 1].item(),
-                cam_fx=cam[random_index, 2].item(),
-                cam_fy=cam[random_index, 3].item(),
-                store=True)
+        # K = gt_keypoints.shape[0]
+        # N, P, _ = predicted_keypoints.shape
+        # predicted_keypoints = predicted_keypoints.reshape(N, P, K, 3)
+        # keypoints = kp_helper.compute_points(points[random_index][None], predicted_keypoints[random_index][None])
+        # self.visualizer.plot_predicted_keypoints(tag='predicted_{}_obj{}'.format(unique_desig[0][random_index].replace('/', '_'), unique_desig[1][random_index]),
+        #         epoch=self.current_epoch,
+        #         img=img_orig[random_index, :, :, :].detach().cpu().numpy(),
+        #         keypoints=keypoints[0].detach().cpu().numpy(),
+        #         cam_cx=cam[random_index, 0].item(),
+        #         cam_cy=cam[random_index, 1].item(),
+        #         cam_fx=cam[random_index, 2].item(),
+        #         cam_fy=cam[random_index, 3].item(),
+        #         store=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(

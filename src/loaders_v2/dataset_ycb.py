@@ -1,40 +1,22 @@
-from helper import compose_quat, rotation_angle, re_quat
+from helper import re_quat
 from torch.autograd import Variable
 import cv2
-# import pcl
-import torchvision.utils as vutils
 import torchvision.transforms as transforms
-import torchvision.datasets as dset
-import torch.optim as optim
-import torch.backends.cudnn as cudnn
-import torch.nn.parallel
-import torch.nn as nn
 import torch
 import time
 import random
 import numpy as np
-import argparse
 from scipy.spatial.transform import Rotation as R
-from os import path
 import numpy.ma as ma
 import copy
-import scipy.misc
 import scipy.io as scio
 import torch.utils.data as data
 from PIL import Image
-import string
-import math
-import coloredlogs
 import logging
 import os
-import sys
 import pickle
-from estimation.state import State_R3xQuat, State_SE3, points
-from helper import compose_quat, rotation_angle, re_quat
-from visu import plot_pcd, plot_two_pcd
-from helper import generate_unique_idx
 from loaders_v2 import Backend, ConfigLoader
-from helper import flatten_dict, get_bbox_480_640
+from helper import get_bbox_480_640
 
 _xmap = np.array([[j for i in range(640)] for j in range(480)])
 _ymap = np.array([[i for i in range(640)] for j in range(480)])
@@ -56,14 +38,14 @@ def _read_keypoint_file(filepath):
     return np.stack(keypoints)
 
 class ImageExtractor:
-    def __init__(self, desig, obj_idx, p_ycb, img, depth, label, meta, num_points,
+    def __init__(self, desig, obj_idx, img, depth, label, meta, object_ids, num_points,
                  pcd_to_cad, keypoints=None):
         self.desig = desig
         self.obj_idx = obj_idx
         self.depth = depth
         self.label = label
         self.meta = meta
-        self._ycb_path = p_ycb
+        self.object_ids = object_ids
         self._pcd_to_cad = pcd_to_cad
         self.cam = self.get_camera(desig)
         self.keypoints = keypoints
@@ -116,8 +98,7 @@ class ImageExtractor:
 
     def _compute_choose(self):
         # check how many pixels/points are within the masked area
-        choose = self._mask[self.rmin:self.rmax, self.cmin:self.cmax].flatten().nonzero()[
-            0]
+        choose = self._mask[self.rmin:self.rmax, self.cmin:self.cmax].flatten().nonzero()[0]
         # choose is a flattend array containg all pixles/points that are part of the object
         if len(choose) > self._num_pt:
             # randomly sample some points choose since object is to big
@@ -176,18 +157,11 @@ class ImageExtractor:
         if self.desig[:8] == 'data_syn':
             # this might lead to problems later because we also use test data as background. But for now at first it is fine
             seed = random.choice(self._real)
-            back = np.array(self._trancolor(Image.open(
-                '{0}/{1}-color.png'.format(self._ycb_path, seed)).convert("RGB")))
+            back = np.array(self._trancolor(self.img.convert("RGB")))
             back = np.transpose(back, (2, 0, 1))[
                 :, self.rmin:self.rmax, self.cmin:self.cmax]
             img_masked = back * \
                 mask_back[self.rmin:self.rmax, self.cmin:self.cmax] + self.img
-
-            try:
-                background_img = Image.open(
-                    '{0}/{1}-color.png'.format(self._ycb_path, self.desig))
-            except:
-                logging.info('cant find background')
         else:
             # TODO: figure out if img_masked is supposed to be with the background masked out.
             img_masked = self.img
@@ -210,25 +184,23 @@ class ImageExtractor:
 
     def keypoint_vectors(self):
         num_keypoints = self.keypoints[1].shape[0]
-        kv = []
-        for i in range(0,8):
-            kv.append(np.copy(self.pcd))
-        object_set = set(np.unique(self.label).tolist())
-        object_set.remove(0)
-        for obj in object_set:
-            kp = self.keypoints[obj]
+        kv = [self.pcd.copy() for _ in range(8)]
+
+        for obj in self.object_ids:
             x_ind, y_ind = np.where(self.label==obj)
-            mask_obj = np.dstack([(self.label==obj)]*3)
+            mask_obj = np.dstack([(self.label==obj)] * 3)
             R, t = self._compute_pose(obj)
+            kp = self.keypoints[obj]
+            kp = (R @ kp[:, :, None])[:, :, 0] + t
             for i in range(0, num_keypoints):
-                kp_vec = np.dot(R, kp[i,:].reshape(3,1)) + t.reshape(3,1)
-                kp_x = kv[i][:, :, 0]*-1 + kp_vec[0,0]
-                kp_y = kv[i][:, :, 1]*-1 + kp_vec[1,0]
-                kp_z = kv[i][:, :, 2]*-1 + kp_vec[2,0]
-                kp_cld = np.dstack((kp_x, kp_y, kp_z))
-                kv[i][mask_obj] = kp_cld[mask_obj]
+                kp_vec = kp[i, :]
+                kp_x = kp_vec[0] - kv[i][:, :, 0]
+                kp_y = kp_vec[1] - kv[i][:, :, 1]
+                kp_z = kp_vec[2] - kv[i][:, :, 2]
+                keypoint_cloud = np.dstack((kp_x, kp_y, kp_z))
+                kv[i][mask_obj] = keypoint_cloud[mask_obj]
         mask_back = np.dstack([(self.label==0)]*3)
-        for i in range(0, num_keypoints): 
+        for i in range(0, num_keypoints):
             kv[i][mask_back] = 0
         return np.stack(kv, axis=2)
 
@@ -257,8 +229,6 @@ class YCB(Backend):
         self._batch_list = self.get_batch_list()
 
         self._length = len(self._batch_list)
-        self._norm = transforms.Normalize(
-            mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
         self._front_num = 2
@@ -286,38 +256,7 @@ class YCB(Backend):
         if self._dataset_config['output_cfg']['visu']['return_img']:
             img_copy = np.array(img.convert("RGB"))
 
-        # what is this doing again
-        add_front = False
-
-        # TODO add here correct way to load noise
-        if self._dataset_config['noise_cfg']['status']:
-            for k in range(5):
-
-                seed = random.choice(self._syn)
-
-                front = np.array(self._trancolor(Image.open(
-                    '{0}/{1}-color.png'.format(self._ycb_path, desig)).convert("RGB")))
-
-                front = np.transpose(front, (2, 0, 1))
-                f_label = np.array(Image.open(
-                    '{0}/{1}-label.png'.format(self._ycb_path, seed)))
-
-                front_label = np.unique(f_label).tolist()[1:]
-                if len(front_label) < self._front_num:
-                    continue
-                front_label = random.sample(front_label, self._front_num)
-                for f_i in front_label:
-                    mk = ma.getmaskarray(ma.masked_not_equal(f_label, f_i))
-                    if f_i == front_label[0]:
-                        mask_front = mk
-                    else:
-                        mask_front = mask_front * mk
-
-                t_label = label * mask_front
-                if len(t_label.nonzero()[0]) > 1000:
-                    label = t_label
-                    add_front = True
-                    break
+        object_ids = np.unique(label)[1:]
 
         if self._dataset_config['noise_cfg']['status']:
             add_t = np.array(
@@ -330,9 +269,9 @@ class YCB(Backend):
             img = self._trancolor(img)
 
         # if self._dataset_config['noise_cfg'].get('motion_blur', False) and desig[:8]=='data_syn':
-        
-        extractor = ImageExtractor(desig, None, self._ycb_path, img, depth, label, meta, self._num_pt,
-                                self._pcd_cad_dict, self._keypoints)
+
+        extractor = ImageExtractor(desig, None, img, depth, label, meta, object_ids,
+                self._num_pt, self._pcd_cad_dict, self._keypoints)
 
         cloud = extractor.pcd
         cam = extractor.cam
@@ -351,171 +290,22 @@ class YCB(Backend):
         # cloud = np.add(cloud, add_t)
 
         tup = (torch.from_numpy(cloud.astype(np.float32)),
-            #    self._norm(torch.from_numpy(np.array(img).astype(np.float32))),
-               torch.from_numpy(np.array(img).astype(np.float32)),
+               torch.from_numpy(np.array(img).astype(np.float32) / 127.5 - 1.0),
                torch.from_numpy(label.astype(np.int)),
                torch.from_numpy(keypoint_vectors),
-               torch.from_numpy(centre_offsets))
-
-        if self._dataset_config['output_cfg']['add_depth_image']:
-            tup += (torch.from_numpy(depth),)
-        else:
-            tup += tuple([0])
+               torch.from_numpy(depth),
+               torch.from_numpy(object_ids))
 
         if self._dataset_config['output_cfg']['visu']['status']:
             # append visu information
+            info = (0, cam)
             if self._dataset_config['output_cfg']['visu']['return_img']:
                 info = (img_copy, cam)
-            else:
-                info = (0, cam)
-
             tup += (info)
         else:
             tup += (0, 0)
 
-        tup += ((desig),)
-        return tup
-
-    def getElement(self, desig, obj_idx):
-        """
-        desig : sequence/idx
-        two problems we face. What is if an object is not visible at all -> meta['obj'] = None
-        """
-
-        try:
-            img = Image.open(
-                '{0}/{1}-color.png'.format(self._ycb_path, desig))
-            depth = np.array(Image.open(
-                '{0}/{1}-depth.png'.format(self._ycb_path, desig)))
-            label = np.array(Image.open(
-                '{0}/{1}-label.png'.format(self._ycb_path, desig)))
-            meta = scio.loadmat(
-                '{0}/{1}-meta.mat'.format(self._ycb_path, desig))
-
-        except FileNotFoundError:
-            logging.error(
-                'cant find files for {0}/{1}'.format(self._ycb_path, desig))
-            return False
-
-        keypoints = self._keypoints[obj_idx]
-
-        if self._dataset_config['output_cfg']['visu']['return_img']:
-            img_copy = np.array(img.convert("RGB"))
-
-        # what is this doing again
-        add_front = False
-
-        # TODO add here correct way to load noise
-        if self._dataset_config['noise_cfg']['status']:
-            for k in range(5):
-
-                seed = random.choice(self._syn)
-
-                front = np.array(self._trancolor(Image.open(
-                    '{0}/{1}-color.png'.format(self._ycb_path, desig)).convert("RGB")))
-
-                front = np.transpose(front, (2, 0, 1))
-                f_label = np.array(Image.open(
-                    '{0}/{1}-label.png'.format(self._ycb_path, seed)))
-
-                front_label = np.unique(f_label).tolist()[1:]
-                if len(front_label) < self._front_num:
-                    continue
-                front_label = random.sample(front_label, self._front_num)
-                for f_i in front_label:
-                    mk = ma.getmaskarray(ma.masked_not_equal(f_label, f_i))
-                    if f_i == front_label[0]:
-                        mask_front = mk
-                    else:
-                        mask_front = mask_front * mk
-
-                t_label = label * mask_front
-                if len(t_label.nonzero()[0]) > 1000:
-                    label = t_label
-                    add_front = True
-                    break
-
-        if self._dataset_config['noise_cfg']['status']:
-            add_t = np.array(
-                [random.uniform(-self._dataset_config['noise_cfg']['noise_trans'], self._dataset_config['noise_cfg']['noise_trans']) for i in range(3)])
-        else:
-            add_t = np.zeros(3)
-
-        # take the noise color image
-        if self._dataset_config['noise_cfg']['status']:
-            img = self._trancolor(img)
-
-        extractor = ImageExtractor(desig, obj_idx, self._ycb_path, img, depth, label, meta, self._num_pt,
-                                   self._pcd_cad_dict)
-
-        target_r, target_t = extractor.compute_pose(obj_idx)
-        gt_rot_wxyz = re_quat(R.from_matrix(target_r).as_quat(), 'xyzw')
-        gt_trans = np.squeeze(target_t + add_t, 0)
-        unique_desig = (desig, obj_idx)
-
-        # less then min_num_points are visible in the scene of the object
-        if not extractor.valid:
-            return (False, gt_rot_wxyz, gt_trans, unique_desig)
-
-        # if self._dataset_config['noise_cfg'].get('motion_blur', False) and desig[:8]=='data_syn':
-
-
-        cloud = extractor.pointcloud()
-        choose = extractor.choose()
-        img_masked = extractor.image_masked()
-        model_points = extractor.model_points(refine=self._dataset_config['output_cfg']['refine'],
-                                              points_small=self._num_pt_mesh_small, points_large=self._num_pt_mesh_large)
-        mask = extractor.mask()
-        cam = extractor.cam
-
-        rmin, rmax, cmin, cmax = extractor.rmin, extractor.rmax, extractor.cmin, extractor.cmax
-
-        # adds noise to target to regress on
-        target = np.dot(model_points, target_r.T)
-        target = np.add(target, target_t + add_t)
-
-        if self._dataset_config['noise_cfg']['status'] and add_front:
-            img_masked = img_masked * mask_front[rmin:rmax, cmin:cmax] + \
-                front[:, rmin:rmax, cmin:cmax] * \
-                ~(mask_front[rmin:rmax, cmin:cmax])
-
-        if desig[:8] == 'data_syn':
-            img_masked = img_masked + \
-                np.random.normal(loc=0.0, scale=7.0, size=img_masked.shape)
-
-        cloud = np.add(cloud, add_t)
-
-        tup = (torch.from_numpy(cloud.astype(np.float32)),
-               torch.LongTensor(choose.astype(np.int32)),
-               self._norm(torch.from_numpy(img_masked.astype(np.float32))),
-               torch.from_numpy(keypoints),
-               torch.from_numpy(model_points.astype(np.float32)),
-               torch.LongTensor([int(obj_idx) - 1]))
-
-        if self._dataset_config['output_cfg']['add_depth_image']:
-            tup += tuple([np.transpose(depth[rmin:rmax, cmin:cmax], (1, 0))])
-        else:
-            tup += tuple([0])
-
-        if self._dataset_config['output_cfg']['visu']['status']:
-            # append visu information
-            if self._dataset_config['output_cfg']['visu']['return_img']:
-                info = (img_copy, cam)
-            else:
-                info = (0, cam)
-
-            tup += (info)
-        else:
-            tup += (0, 0)
-
-        gt_rot_wxyz = re_quat(
-            R.from_matrix(target_r).as_quat(), 'xyzw')
-        gt_trans = np.squeeze(target_t + add_t, 0)
-        unique_desig = (desig, obj_idx)
-
-        tup = tup + (gt_rot_wxyz.astype(np.float32), gt_trans.astype(np.float32), unique_desig)
-
-        return tup
+        return tup + (desig,)
 
     def add_linear_motion_blur(self, img):
         ## Code adapted from He. at al (github user ethnhe):
