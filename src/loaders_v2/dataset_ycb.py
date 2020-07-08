@@ -230,7 +230,7 @@ class ImageExtractor:
         mask_back = np.dstack([(self.label==0)]*3)
         for i in range(0, num_keypoints):
             kv[i][mask_back] = 0
-        return np.dstack(kv)
+        return np.stack(kv, axis=2)
 
 class YCB(Backend):
     def __init__(self, cfg_d, cfg_env):
