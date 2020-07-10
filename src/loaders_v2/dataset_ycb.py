@@ -228,9 +228,24 @@ class ImageExtractor:
                 kp_cld = np.dstack((kp_x, kp_y, kp_z))
                 kv[i][mask_obj] = kp_cld[mask_obj]
         mask_back = np.dstack([(self.label==0)]*3)
-        for i in range(0, num_keypoints):
+        for i in range(0, num_keypoints): 
             kv[i][mask_back] = 0
         return np.stack(kv, axis=2)
+
+    def centre_offsets(self):
+        offsets = np.copy(self.pcd)
+        object_set = set(np.unique(self.label).tolist())
+        object_set.remove(0)
+        for obj in object_set:
+            kp = self.keypoints[obj]
+            x_ind, y_ind = np.where(self.label==obj)
+            mask_obj = np.dstack([(self.label==obj)]*3)
+            R, t = self._compute_pose(obj)
+            offsets_object = np.tile(t, (480, 640, 1)) - offsets
+            offsets[mask_obj] = offsets_object[mask_obj]
+        mask_back = np.dstack([(self.label==0)]*3)
+        offsets[mask_back] = 0
+        return offsets
 
 class YCB(Backend):
     def __init__(self, cfg_d, cfg_env):
@@ -323,6 +338,7 @@ class YCB(Backend):
         cam = extractor.cam
 
         keypoint_vectors = extractor.keypoint_vectors()
+        centre_offsets = extractor.centre_offsets()
 
         # if self._dataset_config['noise_cfg']['status'] and add_front:
         #     img_masked = img_masked * mask_front[rmin:rmax, cmin:cmax] + \
@@ -338,7 +354,8 @@ class YCB(Backend):
             #    self._norm(torch.from_numpy(np.array(img).astype(np.float32))),
                torch.from_numpy(np.array(img).astype(np.float32)),
                torch.from_numpy(label.astype(np.int)),
-               torch.from_numpy(keypoint_vectors))
+               torch.from_numpy(keypoint_vectors),
+               torch.from_numpy(centre_offsets))
 
         if self._dataset_config['output_cfg']['add_depth_image']:
             tup += (torch.from_numpy(depth),)
