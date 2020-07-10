@@ -18,6 +18,8 @@ class GenericDataset():
         self._batch_list = self._backend._batch_list
         self._force_one_object_visible = cfg_d['output_cfg']['force_one_object_visible']
 
+        
+
 
         if self._obj_list_fil is not None:
             self._batch_list = [
