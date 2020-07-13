@@ -1,7 +1,10 @@
+import os
+import sys
 import unittest
 import torch
 import numpy as np
-from lib.loss import KeypointLoss
+sys.path.append(os.getcwd())
+from lib.loss import KeypointLoss, FocalLoss
 
 def build_cube():
     x, y, z = [np.zeros(3) for _ in range(3)]
@@ -68,7 +71,28 @@ class KeypointLossTest(unittest.TestCase):
         value, _ = self.loss(predictions, cube, points, translation)
         self.assertEqual(1.0, value.item())
 
+class FocalLossTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(self):
+        # make 3x3 ground truth label image
+        target = np.zeros((3,3)) # create 2 x 2 image with 3 objects and background
+        target[0,1] = 1
+        target[1,0] = 2
+        target[1,1] = 3
+        self.target = torch.Tensor(target)
+        
+        inputs = np.ones((4, 4, 3, 3))*0.025 # N, C, H, W, default confidence 2.5%
+        # set confidence 0.95 for all true positives
+        inputs[0,0,0,0] = 0.95
+        inputs[1,1,0,1] = 0.95
+        inputs[2,2,1,0] = 0.95
+        inputs[3,3,1,1] = 0.95
+        self.inputs = torch.Tensor(inputs)
+
+        self.loss = FocalLoss(gamma=0, alpha=0.25, size_average=True)
+
+    def test_loss(self):
+        result = self.loss.forward(self.inputs, self.target)
 
 if __name__ == "__main__":
     unittest.main()
-
