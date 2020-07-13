@@ -1,5 +1,5 @@
 from helper import re_quat
-from torch.autograd import Variable
+from torch.nn import functional as F
 import cv2
 import torchvision.transforms as transforms
 import torch
@@ -130,7 +130,7 @@ class ImageExtractor:
         pt2 = self.depth / cam_scale
         pt0 = (_ymap - self.cam[0]) * pt2 / self.cam[2]
         pt1 = (_xmap - self.cam[1]) * pt2 / self.cam[3]
-        return np.dstack((pt0, pt1, pt2))
+        return np.dstack((pt0, pt1, pt2)).astype(np.float32)
 
     def choose(self):
         return np.array([self._choose])
@@ -187,7 +187,6 @@ class ImageExtractor:
         kv = [self.pcd.copy() for _ in range(8)]
 
         for obj in self.object_ids:
-            x_ind, y_ind = np.where(self.label==obj)
             mask_obj = np.dstack([(self.label==obj)] * 3)
             R, t = self._compute_pose(obj)
             kp = self.keypoints[obj]
@@ -204,20 +203,14 @@ class ImageExtractor:
             kv[i][mask_back] = 0
         return np.stack(kv, axis=2)
 
-    def centre_offsets(self):
-        offsets = np.copy(self.pcd)
-        object_set = set(np.unique(self.label).tolist())
-        object_set.remove(0)
-        for obj in object_set:
-            kp = self.keypoints[obj]
-            x_ind, y_ind = np.where(self.label==obj)
-            mask_obj = np.dstack([(self.label==obj)]*3)
-            R, t = self._compute_pose(obj)
-            offsets_object = np.tile(t, (480, 640, 1)) - offsets
-            offsets[mask_obj] = offsets_object[mask_obj]
-        mask_back = np.dstack([(self.label==0)]*3)
-        offsets[mask_back] = 0
-        return offsets
+    def center_vectors(self):
+        H, W = self.label.shape
+        out = np.zeros((H, W, 3), dtype=np.float32)
+        for object_id in self.object_ids:
+            object_mask = self.label == object_id
+            _, t = self._compute_pose(object_id)
+            out[object_mask, :] = t[0, :] - self.pcd[object_mask, :]
+        return out
 
 class YCB(Backend):
     def __init__(self, cfg_d, cfg_env):
@@ -244,7 +237,7 @@ class YCB(Backend):
             depth = np.array(Image.open(
                 '{0}/{1}-depth.png'.format(self._ycb_path, desig)))
             label = np.array(Image.open(
-                '{0}/{1}-label.png'.format(self._ycb_path, desig)))
+                '{0}/{1}-label.png'.format(self._ycb_path, desig))).astype(np.int32)
             meta = scio.loadmat(
                 '{0}/{1}-meta.mat'.format(self._ycb_path, desig))
 
@@ -268,7 +261,6 @@ class YCB(Backend):
         if self._dataset_config['noise_cfg']['status']:
             img = self._trancolor(img)
 
-        # if self._dataset_config['noise_cfg'].get('motion_blur', False) and desig[:8]=='data_syn':
 
         extractor = ImageExtractor(desig, None, img, depth, label, meta, object_ids,
                 self._num_pt, self._pcd_cad_dict, self._keypoints)
@@ -277,7 +269,7 @@ class YCB(Backend):
         cam = extractor.cam
 
         keypoint_vectors = extractor.keypoint_vectors()
-        centre_offsets = extractor.centre_offsets()
+        center_vectors = extractor.center_vectors()
 
         # if self._dataset_config['noise_cfg']['status'] and add_front:
         #     img_masked = img_masked * mask_front[rmin:rmax, cmin:cmax] + \
@@ -289,21 +281,21 @@ class YCB(Backend):
 
         # cloud = np.add(cloud, add_t)
 
+        cloud = cloud.transpose([2, 0, 1]) # H x W x C -> C x H x W
+        img = (np.array(img).astype(np.float32) / 127.5 - 1.0).transpose([2, 0, 1])
+        keypoint_vectors = keypoint_vectors.transpose([2, 0, 1])
+        center_vectors = center_vectors.transpose([2, 0, 1])
         tup = (torch.from_numpy(cloud.astype(np.float32)),
-               torch.from_numpy(np.array(img).astype(np.float32) / 127.5 - 1.0),
+               torch.from_numpy(img),
                torch.from_numpy(label.astype(np.int)),
                torch.from_numpy(keypoint_vectors),
-               torch.from_numpy(depth),
-               torch.from_numpy(object_ids))
+               torch.from_numpy(center_vectors))
 
         if self._dataset_config['output_cfg']['visu']['status']:
             # append visu information
-            info = (0, cam)
-            if self._dataset_config['output_cfg']['visu']['return_img']:
-                info = (img_copy, cam)
-            tup += (info)
+            tup += (cam,)
         else:
-            tup += (0, 0)
+            tup += (0,)
 
         return tup + (desig,)
 

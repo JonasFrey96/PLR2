@@ -106,120 +106,85 @@ class TrackNet6D(LightningModule):
                 own_state[name] = param
                 print('worked for ', name)
 
-    def forward(self, img, points, choose, idx):
-        return self.estimator(
-            img, points, choose, idx)
+    def forward(self, img, points):
+        return self.estimator(img, points)
 
     def training_step(self, batch, batch_idx):
         total_loss = 0
-        total_dis = 0
         l = len(batch)
         for frame in batch:
             # unpack the batch and apply forward pass
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, img, label, keypoints, depth_img, object_ids,
-                    img_orig, cam, unique_desig) = frame
+            (points, img, label, gt_keypoints, gt_centers, cam,
+                    unique_desig) = frame
 
-            # (points, choose, img, gt_keypoints, model_points, idx,
-            #         depth_img, img_orig, cam,
-            #         gt_rot_wxyz, gt_trans, unique_desig) = frame
-
-            # predicted_keypoints, emb = self(img, points, choose, idx)
-
-            # loss, dis = self.criterion(
-            #     predicted_keypoints, gt_keypoints, points, gt_trans)
-            loss = torch.zeros(1, requires_grad=True)
-            dis = torch.zeros(1, requires_grad=True)
+            predicted_keypoints, object_centers, segmentation = self(img, points)
+            loss = self.criterion(predicted_keypoints, object_centers, segmentation,
+                    gt_keypoints, gt_centers, label)
             total_loss += loss
-            total_dis += dis
-        # choose correct loss here
         total_loss = total_loss / l
-        total_dis = total_dis / l
-        tensorboard_logs = {'train_loss': total_loss, 'train_dis': total_dis}
-        return {'loss': total_loss, 'dis': total_dis, 'log': tensorboard_logs, 'progress_bar': {'train_dis': total_dis, 'train_loss': total_loss}}
+        tensorboard_logs = {'train_loss': total_loss}
+        return {'loss': total_loss, 'log': tensorboard_logs, 'progress_bar': {'train_loss': total_loss}}
 
     def validation_step(self, batch, batch_idx):
         total_loss = 0
-        total_dis = 0
 
         for frame in batch:
 
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, img, label, gt_keypoints, depth_img, object_ids,
-                    img_orig, cam, unique_desig) = frame
+            (points, img, label, gt_keypoints, gt_centers, cam, unique_desig) = frame
 
-            # predicted_keypoints, emb = self(img, points, choose, idx)
-            predicted_keypoints = None
-            loss = torch.zeros(1, requires_grad=True)
-            dis = torch.zeros(1, requires_grad=True)
+            predicted_keypoints, object_centers, segmentation = self(img, points)
+            loss = self.criterion(predicted_keypoints, object_centers, segmentation,
+                    gt_keypoints, gt_centers, label)
 
-            # loss, dis = self.criterion(
-            #     predicted_keypoints, gt_keypoints, points, gt_trans)
-
-            if f'val_loss' in self._dict_track.keys():
-                self._dict_track[f'val_loss'].append(
-                    float(loss))
-                self._dict_track[f'val_dis'].append(
-                    float(dis))
+            if 'val_loss' in self._dict_track.keys():
+                self._dict_track['val_loss'].append(loss.item())
             else:
-                self._dict_track[f'val_loss'] = [float(loss)]
-                self._dict_track[f'val_dis'] = [float(dis)]
+                self._dict_track['val_loss'] = [loss.item()]
 
             if self.number_images_log_val > self.counter_images_logged:
-                self.visualize(batch_idx, predicted_keypoints, points, label, object_ids, gt_keypoints, cam, img_orig, unique_desig)
+                self.visualize(batch_idx, predicted_keypoints, object_centers, points, label, gt_keypoints,
+                        gt_centers, cam, img, unique_desig)
                 self.counter_images_logged += 1
 
             total_loss += loss
-            total_dis += dis
 
-        tensorboard_logs = {'val_loss': total_loss /
-                            len(batch), 'val_dis': total_dis / len(batch)}
-        return {'val_loss': total_loss / len(batch), 'val_dis': total_dis / len(batch), 'log': tensorboard_logs}
+        tensorboard_logs = {'val_loss': total_loss / len(batch)}
+        return {'val_loss': total_loss / len(batch), 'log': tensorboard_logs}
 
     def test_step(self, batch, batch_idx):
         # used for tensorboard logging
         total_loss = 0
-        total_dis = 0
 
         for frame in batch:
 
             if frame[0].dtype == torch.bool:
                 continue
 
-            # unpack the batch and apply forward pass
-            (points, choose, img, gt_keypoints, model_points, idx,
-                    depth_img, img_orig, cam,
-                    gt_rot_wxyz, gt_trans, unique_desig) = frame
+            (points, img, label, gt_keypoints, gt_centers, cam, unique_desig) = frame
+            predicted_keypoints, object_centers, segmentation = self(img, points)
+            loss = self.criterion(predicted_keypoints, object_centers, segmentation,
+                    gt_keypoints, gt_centers, label)
 
-            predicted_keypoints, emb = self(img, points, choose, idx)
-
-            loss, dis = self.criterion(
-                predicted_keypoints, gt_keypoints, points, gt_trans)  # wxy
-
-            # self._dict_track is used to log hole epoch
-            # add dis and loss to dict
+            # self._dict_track is used to log whole epoch
             if f'test_loss' in self._dict_track.keys():
-                self._dict_track[f'test_loss'].append(
-                    float(loss))
-                self._dict_track[f'test_dis'].append(
-                    float(dis))
+                self._dict_track[f'test_loss'].append(float(loss))
             else:
                 self._dict_track[f'test_loss'] = [float(loss)]
-                self._dict_track[f'test_dis'] = [float(dis)]
 
             if self.number_images_log_test > self.counter_images_logged:
-                self.visualize(batch_idx, predicted_keypoints, points, label, gt_keypoints, cam, img_orig, unique_desig)
+                self.visualize(batch_idx, predicted_keypoints, object_centers, points, label, gt_keypoints,
+                        gt_centers, cam, img, unique_desig)
                 self.counter_images_logged += 1
 
             total_loss += loss
-            total_dis += dis
 
-        tensorboard_logs = {'test_loss': total_loss / len(batch),
-                            'test_dis': total_dis / len(batch)}
+        tensorboard_logs = {'test_loss': total_loss / len(batch)}
 
         return {**tensorboard_logs,
                 'log': tensorboard_logs}
@@ -237,21 +202,8 @@ class TrackNet6D(LightningModule):
     def validation_epoch_end(self, outputs):
         avg_dict = {}
         for old_key in list(self._dict_track.keys()):
-            avg_dict['avg_' +
-                     old_key] = float(np.mean(np.array(self._dict_track[old_key])))
+            avg_dict['avg_' + old_key] = self._dict_track[old_key].mean()
         self._dict_track = {}
-
-        if avg_dict['avg_val_dis'] < self.best_validation:
-
-            self.best_validation = avg_dict['avg_val_dis']
-            self.best_validation_patience_run = 0
-        else:
-            self.best_validation_patience_run += 1
-            if self.best_validation_patience_run > self.best_validation_patience:
-                print("figure out how to set stop training flag")
-
-        if avg_dict['avg_val_dis'] < self.early_stopping_value:
-            print("figure out how to set stop training flag")
 
         self.counter_images_logged = 0  # reset image log counter
 
@@ -260,47 +212,76 @@ class TrackNet6D(LightningModule):
             avg_dict[k] = torch.tensor(
                 avg_dict[k], dtype=torch.float32, device=self.device)
 
-        return {**avg_dict, 'avg_val_dis_float': float(avg_dict['avg_val_dis']), 'log': tensorboard_log}
+        return {**avg_dict, 'log': tensorboard_log}
 
-    def visualize(self, batch_idx, predicted_keypoints, points, label, object_ids,
-            gt_keypoints, cam, img_orig, unique_desig):
+    def visualize(self, batch_idx, predicted_keypoints, predicted_centers, points, label,
+            gt_keypoints, gt_centers, cam, img_orig, unique_desig):
+        img_orig = img_orig.cpu().numpy()
+        img_orig = ((img_orig + 1.0) * 127.5).astype(np.uint8)
+        img_orig = img_orig.transpose([0, 2, 3, 1])
+        predicted_keypoints = predicted_keypoints.transpose(1, 3).transpose(1, 2)
+        gt_keypoints = gt_keypoints.transpose(1, 3).transpose(1, 2)
+        gt_centers = gt_centers.transpose(1, 3).transpose(1, 2)
+        points = points.transpose(1, 3).transpose(1, 2)
         if self.visualizer is None:
             self.visualizer = Visualizer(os.path.join(exp['model_path'], 'visu'), self.logger.experiment)
 
         random_index = np.random.randint(0, points.shape[0])
-        self.visualizer.plot_keypoints(tag='ground_truth_{}'.format(str(unique_desig[random_index]).replace('/', "_")),
+        self.visualizer.plot_keypoints(tag='gt_keypoints_{}'.format(str(unique_desig[random_index]).replace('/', "_")),
             epoch=self.current_epoch,
-            img=img_orig[random_index, :, :, :].cpu().numpy(),
+            img=img_orig[random_index, :, :, :],
             points=points[random_index].cpu().numpy(),
             keypoints=gt_keypoints[random_index].cpu().numpy(),
             label=label[random_index].cpu().numpy(),
-            object_ids=object_ids[random_index].cpu().numpy(),
             cam_cx=float(cam[random_index, 0]),
             cam_cy=float(cam[random_index, 1]),
             cam_fx=float(cam[random_index, 2]),
             cam_fy=float(cam[random_index, 3]),
             store=True)
 
-        # K = gt_keypoints.shape[0]
-        # N, P, _ = predicted_keypoints.shape
-        # predicted_keypoints = predicted_keypoints.reshape(N, P, K, 3)
-        # keypoints = kp_helper.compute_points(points[random_index][None], predicted_keypoints[random_index][None])
-        # self.visualizer.plot_predicted_keypoints(tag='predicted_{}_obj{}'.format(unique_desig[0][random_index].replace('/', '_'), unique_desig[1][random_index]),
-        #         epoch=self.current_epoch,
-        #         img=img_orig[random_index, :, :, :].detach().cpu().numpy(),
-        #         keypoints=keypoints[0].detach().cpu().numpy(),
-        #         cam_cx=cam[random_index, 0].item(),
-        #         cam_cy=cam[random_index, 1].item(),
-        #         cam_fx=cam[random_index, 2].item(),
-        #         cam_fy=cam[random_index, 3].item(),
-        #         store=True)
+        self.visualizer.plot_keypoints(tag='predicted_{}'.format(unique_desig[random_index].replace('/', '_')),
+                epoch=self.current_epoch,
+                img=img_orig[random_index, :, :, :],
+                points=points[random_index].cpu().numpy(),
+                keypoints=predicted_keypoints[random_index].detach().cpu().numpy(),
+                label=label[random_index].cpu().numpy(),
+                cam_cx=cam[random_index, 0].item(),
+                cam_cy=cam[random_index, 1].item(),
+                cam_fx=cam[random_index, 2].item(),
+                cam_fy=cam[random_index, 3].item(),
+                store=True)
+
+        self.visualizer.plot_centers(tag='gt_centers_{}'.format(unique_desig[random_index]).replace('/', '_'),
+                epoch=self.current_epoch,
+                img=img_orig[random_index, :, :, :],
+                points=points[random_index].cpu().numpy(),
+                centers=gt_centers[random_index].cpu().numpy(),
+                label=label[random_index].cpu().numpy(),
+                cam_cx=cam[random_index, 0].item(),
+                cam_cy=cam[random_index, 1].item(),
+                cam_fx=cam[random_index, 2].item(),
+                cam_fy=cam[random_index, 3].item(),
+                store=True)
+
+        predicted_centers = predicted_centers[random_index].cpu().transpose(0, 1).transpose(1, 2).numpy()
+        self.visualizer.plot_centers(tag='predicted_centers_{}'.format(unique_desig[random_index]).replace('/', '_'),
+                epoch=self.current_epoch,
+                img=img_orig[random_index, :, :, :],
+                points=points[random_index].cpu().numpy(),
+                centers=predicted_centers,
+                label=label[random_index].cpu().numpy(),
+                cam_cx=cam[random_index, 0].item(),
+                cam_cy=cam[random_index, 1].item(),
+                cam_fx=cam[random_index, 2].item(),
+                cam_fy=cam[random_index, 3].item(),
+                store=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
             self.estimator.parameters(), lr=self.exp['lr'])
         scheduler = {
             'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **self.exp['lr_cfg']['on_plateau_cfg']),
-            'monitor': 'avg_val_dis',  # Default: val_loss
+            'monitor': 'avg_val_loss',  # Default: val_loss
             'interval': self.exp['lr_cfg']['interval'],
             'frequency': self.exp['lr_cfg']['frequency']
         }
@@ -319,24 +300,22 @@ class TrackNet6D(LightningModule):
 
         dataset_subset = torch.utils.data.Subset(
             dataset_train, self.indices_train)
-        dataloader_train = torch.utils.data.DataLoader(dataset_train,
+        return torch.utils.data.DataLoader(dataset_train,
                                                        batch_size=self.exp['loader']['batch_size'],
                                                        shuffle=True,
                                                        num_workers=self.exp['loader']['workers'],
                                                        pin_memory=True)
-        return dataloader_train
 
     def test_dataloader(self):
         dataset_test = GenericDataset(
             cfg_d=self.exp['d_test'],
             cfg_env=self.env)
 
-        dataloader_test = torch.utils.data.DataLoader(dataset_test,
+        return torch.utils.data.DataLoader(dataset_test,
                                                       batch_size=self.exp['loader']['batch_size'],
                                                       shuffle=False,
                                                       num_workers=self.exp['loader']['workers'],
                                                       pin_memory=True)
-        return dataloader_test
 
     def val_dataloader(self):
         dataset_val = GenericDataset(
@@ -368,10 +347,12 @@ def file_path(string):
 
 def read_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dev', action='store_true', help="Run all steps quickly. Used for development runs.")
     parser.add_argument('--exp', type=file_path, default='yaml/exp/exp_ws.yml',  # required=True,
                         help='The main experiment yaml file.')
     parser.add_argument('--env', type=file_path, default='yaml/env/env_natrix_jonas.yml',
                         help='The environment yaml file.')
+    parser.add_argument('--gpus', type=int, default=1, help="How many gpus to use in training.")
     parser.add_argument('-w', '--workers', default=None)
     return parser.parse_args()
 
@@ -426,7 +407,7 @@ if __name__ == "__main__":
     # TODO create one early stopping callback
     # https://github.com/PyTorchLightning/pytorch-lightning/blob/63bd0582e35ad865c1f07f61975456f65de0f41f/pytorch_lightning/callbacks/base.py#L12
     early_stop_callback = EarlyStopping(
-        monitor='avg_val_dis_float',
+        monitor='avg_val_loss',
         patience=exp.get('early_stopping_cfg', {}).get('patience', 10),
         strict=True,
         verbose=True,
@@ -437,24 +418,18 @@ if __name__ == "__main__":
     checkpoint_callback = ModelCheckpoint(
         filepath=model_path,
         verbose=True,
-        monitor="avg_val_dis",
+        monitor="avg_val_loss",
         mode="min",
         prefix="",
     )
 
-    trainer = Trainer(gpus=1,
+    trainer = Trainer(gpus=args.gpus,
                       num_nodes=1,
-                      auto_lr_find=False,
-                      accumulate_grad_batches=exp['accumulate_grad_batches'],
                       default_root_dir=model_path,
                       checkpoint_callback=checkpoint_callback,
                       early_stop_callback=early_stop_callback,
-                      fast_dev_run=True,
-                      limit_train_batches=1.0,
-                      limit_test_batches=1.0,
-                      limit_val_batches=1.0,
-                      val_check_interval=0.0,
-                      terminate_on_nan=True)
+                      terminate_on_nan=True,
+                      fast_dev_run=args.dev)
 
     trainer.fit(model)
     trainer.test(model)
