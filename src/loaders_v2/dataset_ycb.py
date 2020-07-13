@@ -80,7 +80,6 @@ class YCB(Backend):
         if self._cfg_d['output_cfg']['visu']['return_img']:
             img_copy = np.array(img.convert("RGB"))
 
-        # what is this doing again
         mask_back = ma.getmaskarray(ma.masked_equal(label, 0))
         add_front = False
 
@@ -218,16 +217,35 @@ class YCB(Backend):
         # adds noise to target to regress on
         target = np.dot(model_points, target_r.T)
         target = np.add(target, target_t + add_t)
-
-        tup = (torch.from_numpy(cloud.astype(np.float32)),
-               torch.LongTensor(choose.astype(np.int32)),
-               self._norm(torch.from_numpy(img_masked.astype(np.float32))),
-               torch.from_numpy(target.astype(np.float32)),
-               torch.from_numpy(model_points.astype(np.float32)),
-               torch.LongTensor([int(obj_idx) - 1]))
+        if self._cfg_d['output_cfg'].get('return_same_size_tensors', False):
+            # maybe not zero the image completly
+            # find complete workaround to deal with choose the target and the model point cloud do we need the corrospondence between points
+            tup = (torch.from_numpy(cloud.astype(np.float32)),
+                   torch.LongTensor(choose.astype(np.int32)),
+                   torch.Tensor([0]),
+                   torch.from_numpy(target.astype(np.float32)),
+                   torch.from_numpy(model_points.astype(np.float32)),
+                   torch.LongTensor([int(obj_idx) - 1]))
+        else:
+            tup = (torch.from_numpy(cloud.astype(np.float32)),
+                   torch.LongTensor(choose.astype(np.int32)),
+                   self._norm(torch.from_numpy(img_masked.astype(np.float32))),
+                   torch.from_numpy(target.astype(np.float32)),
+                   torch.from_numpy(model_points.astype(np.float32)),
+                   torch.LongTensor([int(obj_idx) - 1]))
 
         if self._cfg_d['output_cfg']['add_depth_image']:
-            tup += tuple([np.transpose(depth[rmin:rmax, cmin:cmax], (1, 0))])
+            if self._cfg_d['output_cfg'].get('return_same_size_tensors', False):
+                tup += tuple([torch.from_numpy(depth)])
+            else:
+                tup += tuple([torch.from_numpy(np.transpose(
+                    depth[rmin:rmax, cmin:cmax], (1, 0)))])
+        else:
+            tup += tuple([0])
+
+        if self._cfg_d['output_cfg'].get('add_mask_image', False):
+
+            tup += tuple([torch.from_numpy(label)])
         else:
             tup += tuple([0])
 

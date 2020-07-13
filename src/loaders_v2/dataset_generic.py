@@ -1,6 +1,7 @@
 from loaders_v2 import YCB, Laval, Backend
 import random
 
+
 class GenericDataset():
 
     def __init__(self, cfg_d, cfg_env):
@@ -17,9 +18,12 @@ class GenericDataset():
         self._obj_list_fil = cfg_d['obj_list_fil']
         self._batch_list = self._backend._batch_list
         self._force_one_object_visible = cfg_d['output_cfg']['force_one_object_visible']
-
-        
-
+        self._no_list_for_sequence_len_one = cfg_d['output_cfg'].get(
+            'no_list_for_sequence_len_one', False)
+        if self._no_list_for_sequence_len_one and \
+                cfg_d['output_cfg'].get('seq_length', 1):
+            raise ValueError(
+                'Its not possible to return the batch not as a list if the sequence length is larger than 1.')
 
         if self._obj_list_fil is not None:
             self._batch_list = [
@@ -72,13 +76,20 @@ class GenericDataset():
         for k in self._batch_list[index][2]:
             # each batch_list entry has the form [obj_name, obj_full_path, index_list]
             num = '0' * int(6 - len(str(k))) + str(k)
-            seq.append(self._backend.getElement(
-                desig=f'{self._batch_list[index][1]}/{num}', obj_idx=self._batch_list[index][0]))
-            if not isinstance(seq[-1][0],bool):
-              one_object_visible = True
+            tmp = self._backend.getElement(
+                desig=f'{self._batch_list[index][1]}/{num}', obj_idx=self._batch_list[index][0])
+            seq.append(tmp)
+
+            if not isinstance(seq[-1][0], bool):
+                one_object_visible = True
 
         if self._force_one_object_visible and one_object_visible == False:
-          rand = random.randrange(0, len(self))
-          return self[int(rand)]
+            # ensureres that at least one object is fully visible
+            rand = random.randrange(0, len(self))
+            return self[int(rand)]
 
-        return seq
+        # decide wheater to return as sequence or normal batch
+        if not self._no_list_for_sequence_len_one:
+            return seq
+        else:
+            return tmp

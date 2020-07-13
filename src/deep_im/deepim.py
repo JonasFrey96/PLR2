@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.append(os.getcwd() + "/src/deep_im")
 
-from flownet import FlowNetS, flownets_bn
+from flownet import FlowNetS, flownets_bn, flownets
 import torch.nn as nn
 import torch
 # Implementation questions. How are the bounding boxes created ?
@@ -71,8 +71,9 @@ class DeepIM(nn.Module):
     def from_weights(cls, num_obj, state_dict_path):
         "Initialize MyData from a file"
         model = DeepIM(num_obj)
-        state_dict = torch.load(state_dict_path)
-        model.flow = flownets_bn(data=state_dict)
+        data = torch.load(state_dict_path)
+
+        model.flow = flownets(data={'state_dict': data})
         return model
 
 
@@ -83,4 +84,6 @@ if __name__ == "__main__":
     model(images, num_obj)
 
     model = DeepIM.from_weights(
-        21, '/media/scratch1/jonfrey/models/pretrained_flownet')
+        21, '/media/scratch1/jonfrey/models/pretrained_flownet/FlowNetModels/pytorch/flownets_from_caffe.pth.tar').cuda()
+    out = model(images, num_obj)
+    print(out)
