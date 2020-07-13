@@ -58,6 +58,32 @@ class ADDLossTest(unittest.TestCase):
                 cube_points[None], objects_in_scene, losses)
         self.assertEqual(value[1][0], 0.0)
 
+    def test_translation(self):
+        point_count = 100
+        H = 100
+        W = 200
+        translation = np.zeros((1, self.keypoint_count, 3, H, W))
+        diff = np.random.randn(3)
+        translation[:, :, :, :, :] = diff[None, None, :, None, None]
+        cube = build_cube()[None]
+        predictions = torch.tensor(np.zeros((1, self.keypoint_count, 3, H, W)))
+        points = torch.randn(1, 3, H, W, dtype=torch.float64)
+        for h in range(H):
+            for w in range(W):
+                point = points[0, :, h, w]
+                for k in range(self.keypoint_count):
+                    keypoint = cube[0, k, :]
+                    predictions[0, k, :, h, w] = keypoint - point
+        label = torch.tensor(np.zeros((1, 100, 200), dtype=np.int64))
+        label[0, 25:75, 50:150] = 1
+        cube_points = sample_cube_points()
+        objects_in_scene = torch.tensor(np.ones((1, 1), dtype=np.int64))
+        losses = {}
+        gt_keypoints = predictions + translation
+        value = self.loss(points, predictions, gt_keypoints, label, cube,
+                cube_points[None], objects_in_scene, losses)
+        self.assertAlmostEqual(value[1][0], np.linalg.norm(diff, 2))
+
 
 
 

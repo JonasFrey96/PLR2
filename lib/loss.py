@@ -138,9 +138,9 @@ class MultiObjectADDLoss:
                 T_hat = keypoint_helper.solve_transform(object_keypoints,
                         keypoints)[0]
                 if object_index in self.sym_list:
-                    add = self._compute_add(gt_T, T_hat, object_models[object_index])
-                else:
                     add = self._compute_add_symmetric(gt_T, T_hat, object_models[object_index])
+                else:
+                    add = self._compute_add(gt_T, T_hat, object_models[object_index])
                 if object_id not in losses:
                     losses[object_id] = []
                 losses[object_id].append(add.item())
@@ -150,9 +150,9 @@ class MultiObjectADDLoss:
     def _compute_add(self, gt_T, T_hat, model_points):
         ones = torch.ones(model_points.shape[0], 1, dtype=model_points.dtype).to(gt_T.device)
         points = torch.cat([model_points, ones], dim=1)[:, :, None]
-        ground_truth = gt_T @ points
-        predicted = T_hat @ points
-        return (ground_truth - predicted).norm(dim=0).mean()
+        ground_truth = (gt_T @ points)[:, :3, 0]
+        predicted = (T_hat @ points)[:, :3, 0]
+        return (ground_truth - predicted).norm(dim=1).mean()
 
     def _compute_add_symmetric(self, gt_T, T_hat, model_points):
         ones = torch.ones(model_points.shape[0], 1, dtype=model_points.dtype).to(gt_T.device)
