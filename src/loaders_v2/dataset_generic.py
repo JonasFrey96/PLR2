@@ -1,3 +1,4 @@
+import torch
 from loaders_v2 import YCB, Laval, Backend
 import random
 import numpy as np
@@ -66,6 +67,35 @@ class GenericDataset():
     @property
     def seq_length(self):
         return len(self._batch_list[0][2])
+
+    def object_models(self):
+        """
+        Returns a tensor containing a set of points on the object model.
+        Notice that indices will be off-by-one compared to the semantic segmentation labels as
+        zero for the semantic label is the background and doesn't have a model.
+        returns: N x P x 3
+        """
+        point_count = self.get_num_points_mesh()
+        object_models = self._backend.object_models
+        object_models = [object_models[i] for i in range(1, len(object_models) + 1)]
+        points = torch.zeros(len(object_models), point_count, 3, dtype=torch.float32)
+        for i in range(0, len(object_models)):
+            model = torch.tensor(object_models[0])
+            indices = np.random.choice(np.arange(model.shape[0]), point_count, replace=False)
+            points[i, :, :] = model[indices, :]
+        return points
+
+    def keypoints(self):
+        """
+        Gives the ground truth object keypoints in the mesh coordinate frame.
+        return: M x K x 3
+        """
+        keypoints = self._backend.keypoints
+        out = torch.zeros((len(keypoints), 8, 3))
+        for i in range(out.shape[0]):
+            object_keypoints = keypoints[i + 1]
+            out[i, :, :] = torch.tensor(object_keypoints)
+        return out
 
     def get_num_points_mesh(self, refine=False):
         # onlt implemented for backwards compatability. Refactor this

@@ -37,7 +37,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 coloredlogs.install()
 
-from lib.loss import KeypointLoss
+from lib.loss import KeypointLoss, MultiObjectADDLoss
 from lib import keypoint_helper as kp_helper
 from lib.loss_refiner import Loss_refine
 from lib.network import KeypointNet
@@ -58,7 +58,7 @@ class TrackNet6D(LightningModule):
                 exp_config_flatten[k] = 'is None'
         self.hparams = exp_config_flatten
 
-        self.test_size = 0.9
+        self.validation_size = 0.05
         self.env, self.exp = env, exp
 
         self.estimator = KeypointNet(
@@ -75,6 +75,7 @@ class TrackNet6D(LightningModule):
 
         num_poi = exp['d_train']['num_pt_mesh_small']
         self.criterion = KeypointLoss(num_poi)
+        self.add_loss = MultiObjectADDLoss(exp['d_train']['obj_list_sym'])
 
         self.refine = False
         self.w = exp['w_normal']
@@ -90,7 +91,22 @@ class TrackNet6D(LightningModule):
         self.number_images_log_test = 10
         self.counter_images_logged = 0
 
-        self.init_train_vali_split = False
+        self._init_datasets()
+
+    def _init_datasets(self):
+        dataset_train = GenericDataset(
+            cfg_d=self.exp['d_train'],
+            cfg_env=self.env)
+
+        self.indices_train, self.indices_valid = sklearn.model_selection.train_test_split(
+            range(0, len(dataset_train)), test_size=self.validation_size)
+        self.dataset_train = torch.utils.data.Subset(
+            dataset_train, self.indices_train)
+
+        self.dataset_val = torch.utils.data.Subset(dataset_train, self.indices_valid)
+        self.object_models = dataset_train.object_models()
+        self.keypoints = dataset_train.keypoints()
+        self.K = self.keypoints.shape[1]
 
     def load_my_state_dict(self, state_dict):
         own_state = self.estimator.state_dict()
@@ -118,7 +134,7 @@ class TrackNet6D(LightningModule):
                 continue
 
             (points, img, label, gt_keypoints, gt_centers, cam,
-                    unique_desig) = frame
+                    objects_in_scene, unique_desig) = frame
 
             predicted_keypoints, object_centers, segmentation = self(img, points)
             loss = self.criterion(predicted_keypoints, object_centers, segmentation,
@@ -130,17 +146,27 @@ class TrackNet6D(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         total_loss = 0
+        model_keypoints = self.keypoints.to(self.device)
+        object_models = self.object_models.to(self.device)
 
+        add_losses = {}
         for frame in batch:
 
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, img, label, gt_keypoints, gt_centers, cam, unique_desig) = frame
+            (points, img, label, gt_keypoints, gt_centers, cam,
+                    objects_in_scene, unique_desig) = frame
 
             predicted_keypoints, object_centers, segmentation = self(img, points)
             loss = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
+
+            N, _, H, W = gt_keypoints.shape
+            predicted_keypoints = predicted_keypoints.reshape(N, self.K, 3, H, W)
+            gt_keypoints = gt_keypoints.reshape(N, self.K, 3, H, W)
+            add_loss = self.add_loss(points, predicted_keypoints, gt_keypoints, label,
+                    model_keypoints, object_models, objects_in_scene, add_losses)
 
             if 'val_loss' in self._dict_track.keys():
                 self._dict_track['val_loss'].append(loss.item())
@@ -154,7 +180,10 @@ class TrackNet6D(LightningModule):
 
             total_loss += loss
 
-        tensorboard_logs = {'val_loss': total_loss / len(batch)}
+        add_log = {}
+        for key, values in add_losses.items():
+            add_log['add_obj_{}'.format(key)] = np.mean(values)
+        tensorboard_logs = {'val_loss': total_loss / len(batch), **add_log}
         return {'val_loss': total_loss / len(batch), 'log': tensorboard_logs}
 
     def test_step(self, batch, batch_idx):
@@ -166,7 +195,7 @@ class TrackNet6D(LightningModule):
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, img, label, gt_keypoints, gt_centers, cam, unique_desig) = frame
+            (points, img, label, gt_keypoints, gt_centers, cam, objects_in_scene, unique_desig) = frame
             predicted_keypoints, object_centers, segmentation = self(img, points)
             loss = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
@@ -178,6 +207,9 @@ class TrackNet6D(LightningModule):
                 self._dict_track[f'test_loss'] = [float(loss)]
 
             if self.number_images_log_test > self.counter_images_logged:
+                N, _, H, W = gt_keypoints.shape
+                predicted_keypoints = predicted_keypoints.reshape(N, self.K, 3, H, W)
+                gt_keypoints = gt_keypoints.reshape(N, self.K, 3, H, W)
                 self.visualize(batch_idx, predicted_keypoints, object_centers, points, label, gt_keypoints,
                         gt_centers, cam, img, unique_desig)
                 self.counter_images_logged += 1
@@ -202,7 +234,7 @@ class TrackNet6D(LightningModule):
     def validation_epoch_end(self, outputs):
         avg_dict = {}
         for old_key in list(self._dict_track.keys()):
-            avg_dict['avg_' + old_key] = self._dict_track[old_key].mean()
+            avg_dict['avg_' + old_key] = np.mean(self._dict_track[old_key])
         self._dict_track = {}
 
         self.counter_images_logged = 0  # reset image log counter
@@ -219,8 +251,8 @@ class TrackNet6D(LightningModule):
         img_orig = img_orig.cpu().numpy()
         img_orig = ((img_orig + 1.0) * 127.5).astype(np.uint8)
         img_orig = img_orig.transpose([0, 2, 3, 1])
-        predicted_keypoints = predicted_keypoints.transpose(1, 3).transpose(1, 2)
-        gt_keypoints = gt_keypoints.transpose(1, 3).transpose(1, 2)
+        predicted_keypoints = predicted_keypoints.transpose(1, 3).transpose(2, 4)
+        gt_keypoints = gt_keypoints.transpose(1, 3).transpose(2, 4)
         gt_centers = gt_centers.transpose(1, 3).transpose(1, 2)
         points = points.transpose(1, 3).transpose(1, 2)
         if self.visualizer is None:
@@ -288,19 +320,7 @@ class TrackNet6D(LightningModule):
         return [optimizer], [scheduler]
 
     def train_dataloader(self):
-        dataset_train = GenericDataset(
-            cfg_d=self.exp['d_train'],
-            cfg_env=self.env)
-
-        # initalize train and validation indices
-        if not self.init_train_vali_split:
-            self.init_train_vali_split = True
-            self.indices_valid, self.indices_train = sklearn.model_selection.train_test_split(
-                range(0, len(dataset_train)), test_size=self.test_size)
-
-        dataset_subset = torch.utils.data.Subset(
-            dataset_train, self.indices_train)
-        return torch.utils.data.DataLoader(dataset_train,
+        return torch.utils.data.DataLoader(self.dataset_train,
                                                        batch_size=self.exp['loader']['batch_size'],
                                                        shuffle=True,
                                                        num_workers=self.exp['loader']['workers'],
@@ -318,25 +338,11 @@ class TrackNet6D(LightningModule):
                                                       pin_memory=True)
 
     def val_dataloader(self):
-        dataset_val = GenericDataset(
-            cfg_d=self.exp['d_train'],
-            cfg_env=self.env)
-
-        # initalize train and validation indices
-        if not self.init_train_vali_split:
-            self.init_train_vali_split = True
-            self.indices_valid, self.indices_train = sklearn.model_selection.train_test_split(
-                range(0, len(dataset_val)), test_size=self.test_size)
-
-        dataset_subset = torch.utils.data.Subset(
-            dataset_val, self.indices_valid)
-        dataloader_val = torch.utils.data.DataLoader(dataset_val,
+        return torch.utils.data.DataLoader(self.dataset_val,
                                                      batch_size=self.exp['loader']['batch_size'],
                                                      shuffle=False,
                                                      num_workers=self.exp['loader']['workers'],
                                                      pin_memory=True)
-        return dataloader_val
-
 
 def file_path(string):
     if os.path.isfile(string):
