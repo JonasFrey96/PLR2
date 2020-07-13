@@ -132,42 +132,85 @@ class PoseNet(nn.Module):
 
         return out_rx, out_tx, out_cx, emb.detach()
 
-class KeypointNet(nn.Module):
-    def __init__(self, num_points, num_obj, num_keypoints=8):
+def pointwise_conv(in_features, maps, out_features):
+    return nn.Sequential(
+        nn.ReLU(),
+        nn.Conv1d(in_features, maps, kernel_size=1, bias=False),
+        nn.BatchNorm1d(maps),
+        nn.ReLU(),
+        nn.Conv1d(maps, out_features, kernel_size=1, bias=False)
+        )
+
+class BasicBlock(nn.Module):
+    def __init__(self, in_features, out_features, downsample=True):
         super().__init__()
+        self.conv1 = nn.Conv2d(in_features, in_features, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(in_features)
+        if downsample:
+            self.pool = nn.MaxPool2d(2)
+        else:
+            self.pool = lambda x: x
+        self.conv2 = nn.Conv2d(in_features, out_features, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_features)
+        self.relu = nn.ReLU()
+
+        if in_features != out_features:
+            self.map = nn.Sequential(nn.Conv2d(in_features, out_features, kernel_size=1, stride=1, padding=0, bias=False),
+                    nn.BatchNorm2d(out_features))
+        else:
+            self.map = lambda x: x
+
+    def forward(self, x):
+        identity = x
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.pool(x)
+        out = self.bn2(self.conv2(x))
+        out += self.pool(self.map(identity))
+        return self.relu(out)
+
+from torchvision.models.segmentation.deeplabv3 import DeepLabHead
+class KeypointNet(nn.Module):
+    def __init__(self, num_points, num_obj, num_keypoints=8, num_classes=22):
+        super().__init__()
+        self.features =  nn.Sequential(nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU()) # might benefit from inplace
+        # 240 x 320
+        self.downsample_block1 = BasicBlock(64, 64)
+        # 120 x 160
+        self.downsample_block2 = BasicBlock(64, 128, downsample=False)
+        # 60 x 80
+        self.conv_block = BasicBlock(128, 128, downsample=False)
+        self.point_dimensions = 128
         self.num_points = num_points
         self.num_obj = num_obj
         self.num_keypoints = num_keypoints
         self.keypoint_features = num_keypoints * 3
-        self.image_network = ModifiedResnet()
-        self.point_network = PoseNetFeat(num_points)
 
-        self.conv0 = nn.Conv1d(1408, 512, kernel_size=1)
-        self.conv1 = nn.Conv1d(512, 512, kernel_size=1)
-        self.conv2 = nn.Conv1d(512, 256, kernel_size=1)
-        self.conv_out = nn.Conv1d(256, num_obj * self.keypoint_features, kernel_size=1)
+        self.keypoint_head = DeepLabHead(128 + 3, num_keypoints * 3)
+        self.center_head = DeepLabHead(128 + 3, 3)
+        self.segmentation_head = DeepLabHead(128, num_classes)
 
-    def forward(self, img, x, choose, obj):
-        out_img = self.image_network(img)
+    def forward(self, img, points):
+        N, C, H, W = img.shape
+        x = torch.cat([img, points], dim=1)
+        x = self.features(x)
+        x = self.downsample_block1(x)
+        x = self.downsample_block2(x)
+        x = self.conv_block(x)
 
-        batch_size, dimensions, _, _ = out_img.size()
+        points = F.interpolate(points, [120, 160], mode='bilinear', align_corners=True)
+        x_points = torch.cat([x, points], dim=1)
+        keypoints = self.keypoint_head(x_points)
+        centers = self.center_head(x_points)
+        segmentation = self.segmentation_head(x)
 
-        embedding = out_img.view(batch_size, dimensions, -1)
-        choose = choose.repeat(1, dimensions, 1)
-        embedding = torch.gather(embedding, 2, choose).contiguous()
+        keypoints = F.interpolate(keypoints, [480, 640], mode='bilinear', align_corners=True)
+        centers = F.interpolate(centers, [480, 640], mode='bilinear', align_corners=True)
+        segmentation = F.interpolate(segmentation, [480, 640], mode='bilinear', align_corners=True)
 
-        # N x P x D -> N x D x P
-        x = x.transpose(2, 1).contiguous()
-        # N x features x P
-        pointwise_features = self.point_network(x, embedding)
-        x = F.relu(self.conv0(pointwise_features))
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        # N x D x P -> N X P x num_obj x keypoints
-        x = self.conv_out(x).transpose(2, 1).reshape(batch_size, self.num_points,
-                self.num_obj, self.keypoint_features)
-        x = torch.index_select(x, dim=2, index=obj.flatten())[:, :, 0, :]
-        return x, embedding
+        return keypoints, centers, segmentation
+
 
 class PoseRefineNetFeat(nn.Module):
     def __init__(self, num_points):
