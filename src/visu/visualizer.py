@@ -48,10 +48,9 @@ class Visualizer():
             cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, w=2):
         """
         Project keypoints onto the image and save it. Each keypoint will have it's own color.
-        keypoints: H x W x K*3
+        keypoints: H x W x K x 3
         """
-        H, W, K3 = keypoints.shape
-        K = K3 // 3
+        H, W, K, _ = keypoints.shape
         keypoints = points[:, :, None, :] + keypoints.reshape(H, W, K, 3)
         object_ids = np.unique(label)
         for object_index in object_ids[1:]:

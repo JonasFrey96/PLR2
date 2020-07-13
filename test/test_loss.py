@@ -5,13 +5,10 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 sys.path.append(os.getcwd())
-from lib.loss import KeypointLoss, FocalLoss
+from lib.loss import KeypointLoss, FocalLoss, MultiObjectADDLoss
 
 def build_cube():
-    x, y, z = [np.zeros(3) for _ in range(3)]
-    x[0] = 1.0
-    y[1] = 1.0
-    z[2] = 1.0
+    x, y, z = np.eye(3)
     cube_vertices = np.zeros((8, 3))
     multipliers = (-1, 1)
     for i in range(2):
@@ -24,53 +21,74 @@ def build_cube():
                 cube_vertices[index] = i_m * x + j_m * y + k_m * z
     return torch.tensor(cube_vertices)
 
-class KeypointLossTest(unittest.TestCase):
+def sample_cube_points(n=100):
+    out = np.zeros((n, 3))
+    I = np.eye(3)
+    for i in range(n):
+        face = np.random.randint(3)
+        u = I[face, :] * np.random.choice([-1, 1])
+        v = I[(face + 1) % 3, :]
+        w = I[(face + 2) % 3, :]
+        out[i] = u + np.random.uniform(-1, 1) * v + np.random.uniform(-1, 1) * w
+
+    return torch.tensor(out)
+
+class ADDLossTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.keypoint_count = 8
-        cls.loss = KeypointLoss(None, cls.keypoint_count)
+        cls.loss = MultiObjectADDLoss([])
 
-    # def test_single_zero(self):
-    #     point_count = 100
-    #     cube = build_cube()[None]
-    #     predictions = torch.tensor(np.zeros((1, point_count, self.keypoint_count, 3)))
-    #     points = torch.randn(1, point_count, 3)
-    #     for i in range(point_count):
-    #         point = points[0, i, :]
-    #         for k in range(self.keypoint_count):
-    #             keypoint = cube[0, k, :]
-    #             predictions[0, i, k, :] = keypoint - point
-    #     translation = torch.zeros(1, 3)
-    #     value, _ = self.loss(predictions, cube, points, translation)
-    #     self.assertEqual(0.0, value.item())
+    def test_zero(self):
+        point_count = 100
+        cube = build_cube()[None]
+        H = 100
+        W = 200
+        predictions = torch.tensor(np.zeros((1, self.keypoint_count, 3, H, W)))
+        points = torch.randn(1, 3, H, W, dtype=torch.float64)
+        for h in range(H):
+            for w in range(W):
+                point = points[0, :, h, w]
+                for k in range(self.keypoint_count):
+                    keypoint = cube[0, k, :]
+                    predictions[0, k, :, h, w] = keypoint - point
+        translation = torch.zeros(1, 3)
+        label = torch.tensor(np.zeros((1, 100, 200), dtype=np.int64))
+        label[0, 25:75, 50:150] = 1
+        cube_points = sample_cube_points()
+        objects_in_scene = torch.tensor(np.ones((1, 1), dtype=np.int64))
+        losses = {}
+        value = self.loss(points, predictions, predictions, label, cube,
+                cube_points[None], objects_in_scene, losses)
+        self.assertEqual(value[1][0], 0.0)
 
-    # def test_batch_size_two(self):
-    #     point_count = 5
-    #     cube = build_cube()[None].repeat(2, 1, 1)
-    #     predictions = torch.tensor(np.zeros((2, point_count, self.keypoint_count * 3)))
-    #     translation = torch.zeros(2, 3)
-    #     points = cube[0, 0][None].expand(2, point_count, -1)
-    #     gt_points = cube[0, 0][None].expand(2, 8, -1)
-    #     value, _ = self.loss(predictions, gt_points, points, translation)
-    #     self.assertEqual(0.0, value)
+    def test_translation(self):
+        point_count = 100
+        H = 100
+        W = 200
+        translation = np.zeros((1, self.keypoint_count, 3, H, W))
+        diff = np.random.randn(3)
+        translation[:, :, :, :, :] = diff[None, None, :, None, None]
+        cube = build_cube()[None]
+        predictions = torch.tensor(np.zeros((1, self.keypoint_count, 3, H, W)))
+        points = torch.randn(1, 3, H, W, dtype=torch.float64)
+        for h in range(H):
+            for w in range(W):
+                point = points[0, :, h, w]
+                for k in range(self.keypoint_count):
+                    keypoint = cube[0, k, :]
+                    predictions[0, k, :, h, w] = keypoint - point
+        label = torch.tensor(np.zeros((1, 100, 200), dtype=np.int64))
+        label[0, 25:75, 50:150] = 1
+        cube_points = sample_cube_points()
+        objects_in_scene = torch.tensor(np.ones((1, 1), dtype=np.int64))
+        losses = {}
+        gt_keypoints = predictions + translation
+        value = self.loss(points, predictions, gt_keypoints, label, cube,
+                cube_points[None], objects_in_scene, losses)
+        self.assertAlmostEqual(value[1][0], np.linalg.norm(diff, 2))
 
-    # def test_error_batch(self):
-    #     point_count = 10
-    #     batch_size = 4
-    #     cube = build_cube()[None].expand(batch_size, -1, -1)
-    #     predictions = torch.tensor(np.zeros((batch_size, point_count, self.keypoint_count, 3)))
-    #     points = torch.randn(batch_size, point_count, 3)
-    #     for b in range(batch_size):
-    #         error = torch.zeros(3)
-    #         error[b % 3] = 1.0
-    #         for i in range(point_count):
-    #             point = points[b, i, :]
-    #             for k in range(self.keypoint_count):
-    #                 keypoint = cube[b, k, :]
-    #                 predictions[b, i, k, :] = keypoint - point + error
-    #     translation = torch.zeros(batch_size, 3)
-    #     value, _ = self.loss(predictions, cube, points, translation)
-    #     self.assertEqual(1.0, value.item())
+
 
 class FocalLossTest(unittest.TestCase):
     @classmethod

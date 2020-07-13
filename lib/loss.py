@@ -5,7 +5,7 @@ import numpy as np
 import torch.nn as nn
 from torch.nn import functional as F
 from lib.knn.__init__ import KNearestNeighbor
-#from lib.knn import KNearestNeighbor
+from lib import keypoint_helper
 
 def loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, w, refine, num_point_mesh, sym_list):
     bs, num_p, _ = pred_c.size()
@@ -67,10 +67,9 @@ def loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, 
     return loss, dis[0][which_max[0]], new_points.detach(), new_target.detach()
 
 
-class Loss(_Loss):
-
+class ADDLoss(_Loss):
     def __init__(self, num_points_mesh, sym_list):
-        super(Loss, self).__init__(True)
+        super().__init__(True)
         self.num_pt_mesh = num_points_mesh
         self.sym_list = sym_list
 
@@ -81,9 +80,9 @@ class Loss(_Loss):
 class KeypointLoss(_Loss):
     def __init__(self, keypoint_weight=1.0, center_weight=1.0, semantic_weight=1.0):
         super().__init__()
-        self.keypoint_weight = 1.0
-        self.center_weight = 1.0
-        self.semantic_weight = 1.0
+        self.keypoint_weight = keypoint_weight
+        self.center_weight = center_weight
+        self.semantic_weight = semantic_weight
         self.cross_entropy = nn.CrossEntropyLoss()
 
     def forward(self, p_keypoints, p_centers, p_semantic, gt_keypoints, gt_centers, gt_semantic):
@@ -93,7 +92,6 @@ class KeypointLoss(_Loss):
         semantic: N x H x W x C
         object_ids: N
         """
-        keypoint_loss = 0.0
         loss_mask = gt_semantic != 0
         keypoint_diff = torch.pow(p_keypoints - gt_keypoints, 2).sum(dim=1)
         N = float(p_keypoints.shape[0])
@@ -105,6 +103,7 @@ class KeypointLoss(_Loss):
                 self.center_weight * center_loss +
                 self.semantic_weight * semantic_loss)
 
+<<<<<<< HEAD
 class FocalLoss(_Loss):
     """Adapted from implementation by He et. al in PVN3D. Original code available
     at https://github.com/ethnhe/PVN3D.
@@ -142,3 +141,66 @@ class FocalLoss(_Loss):
         loss = -1 * a_t*(1-pt)**self.gamma * logpt
         if self.size_average: return loss.mean()
         else: return loss.sum()
+=======
+
+class MultiObjectADDLoss:
+    def __init__(self, sym_list):
+        self.sym_list = sym_list
+
+    def __call__(self, points, p_keypoints, gt_keypoints, gt_label, model_keypoints,
+            object_models, objects_in_scene, losses):
+        """
+        p_keypoints: N x K x 3 x H x W
+        gt_keypoints: N x K x 3 x H x W
+        model_keypoints: M x K x 3
+        object_models: M x P x 3
+        objects_in_scene: N x M
+        returns dictionary of losses by object
+        """
+        gt_keypoints = points[:, None] + gt_keypoints
+        p_keypoints = points[:, None] + p_keypoints
+        N = p_keypoints.shape[0]
+        for i in range(N):
+            objects = torch.nonzero(objects_in_scene[i])[0]
+            for object_index in objects:
+                object_id = (object_index + 1).item()
+                object_mask = gt_label[i] == object_id
+
+                object_keypoints = p_keypoints[i, :, :, object_mask]
+                gt_object_keypoints = gt_keypoints[i, :, :, object_mask]
+                keypoints = model_keypoints[object_index]
+                gt_object_keypoints = keypoint_helper.vote(gt_object_keypoints[None])
+                object_keypoints = keypoint_helper.vote(object_keypoints[None])
+
+                gt_T = keypoint_helper.solve_transform(gt_object_keypoints,
+                        keypoints)[0]
+                T_hat = keypoint_helper.solve_transform(object_keypoints,
+                        keypoints)[0]
+                if object_index in self.sym_list:
+                    add = self._compute_add_symmetric(gt_T, T_hat, object_models[object_index])
+                else:
+                    add = self._compute_add(gt_T, T_hat, object_models[object_index])
+                if object_id not in losses:
+                    losses[object_id] = []
+                losses[object_id].append(add.item())
+        return losses
+
+
+    def _compute_add(self, gt_T, T_hat, model_points):
+        ones = torch.ones(model_points.shape[0], 1, dtype=model_points.dtype).to(gt_T.device)
+        points = torch.cat([model_points, ones], dim=1)[:, :, None]
+        ground_truth = (gt_T @ points)[:, :3, 0]
+        predicted = (T_hat @ points)[:, :3, 0]
+        return (ground_truth - predicted).norm(dim=1).mean()
+
+    def _compute_add_symmetric(self, gt_T, T_hat, model_points):
+        ones = torch.ones(model_points.shape[0], 1, dtype=model_points.dtype).to(gt_T.device)
+        points = torch.cat([model_points, ones], dim=1)[:, :, None]
+        ground_truth = (gt_T @ points)[:, :3, 0]
+        predicted = (T_hat @ points)[:, :3, 0]
+        dima = (ground_truth[None] - predicted[:, None]).norm(dim=2)
+        min_values, _ = dima.min(dim=1)
+        return min_values.mean(dim=0)
+
+
+>>>>>>> 30685f397cc387655c85935d287af7432bd21041

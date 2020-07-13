@@ -201,7 +201,7 @@ class ImageExtractor:
         mask_back = np.dstack([(self.label==0)]*3)
         for i in range(0, num_keypoints):
             kv[i][mask_back] = 0
-        return np.stack(kv, axis=2)
+        return np.concatenate(kv, axis=2)
 
     def center_vectors(self):
         H, W = self.label.shape
@@ -219,12 +219,21 @@ class YCB(Backend):
         self._env_config = cfg_env
         self._ycb_path = cfg_env['p_ycb']
         self._pcd_cad_dict, self._name_to_idx, self._keypoints = self._read_model_files()
+        self._object_count = len(self._pcd_cad_dict)
         self._batch_list = self.get_batch_list()
 
         self._length = len(self._batch_list)
 
         self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
         self._front_num = 2
+
+    @property
+    def object_models(self):
+        return self._pcd_cad_dict
+
+    @property
+    def keypoints(self):
+        return self._keypoints
 
     def getFullImage(self, desig):
         """
@@ -251,12 +260,6 @@ class YCB(Backend):
 
         object_ids = np.unique(label)[1:]
 
-        if self._dataset_config['noise_cfg']['status']:
-            add_t = np.array(
-                [random.uniform(-self._dataset_config['noise_cfg']['noise_trans'], self._dataset_config['noise_cfg']['noise_trans']) for i in range(3)])
-        else:
-            add_t = np.zeros(3)
-
         # take the noise color image
         if self._dataset_config['noise_cfg']['status']:
             img = self._trancolor(img)
@@ -279,8 +282,6 @@ class YCB(Backend):
         # if desig[:8] == 'data_syn':
         #     img_masked = img_masked + np.random.normal(loc=0.0, scale=7.0, size=img_masked.shape)
 
-        # cloud = np.add(cloud, add_t)
-
         cloud = cloud.transpose([2, 0, 1]) # H x W x C -> C x H x W
         img = (np.array(img).astype(np.float32) / 127.5 - 1.0).transpose([2, 0, 1])
         keypoint_vectors = keypoint_vectors.transpose([2, 0, 1])
@@ -297,7 +298,9 @@ class YCB(Backend):
         else:
             tup += (0,)
 
-        return tup + (desig,)
+        objects_in_scene = np.zeros((self._object_count,))
+        objects_in_scene[object_ids - 1] = 1.0
+        return tup + (objects_in_scene, desig)
 
     def add_linear_motion_blur(self, img):
         ## Code adapted from He. at al (github user ethnhe):
