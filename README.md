@@ -36,8 +36,9 @@ Install KNN (not tested):
 conda activate track
 cd PLR2/lib/knn
 python setup.py build
-cp -r lib.linux-x86_64-3.7/* ./
+cp -r ./build/lib.linux-x86_64-3.7/* ./knn_pytorch/
 ```
+Delete the .so file generated in the .lib/knn folder.
 
 Setting up global variables:
 Got to:
