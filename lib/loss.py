@@ -119,7 +119,7 @@ class FocalLoss(_Loss):
         """
         semantic: N x H x W x C
         object_ids: N
-        """ 
+        """
         input = input.view(input.size(0), input.size(1) * input.size(2), -1) # N, H, W, C => N, H*W, C
         input = input.contiguous().view(-1,input.size(2))   # N,H*W,C => N*H*W,C
         target = target.view(-1,1)
@@ -200,4 +200,7 @@ class MultiObjectADDLoss:
         min_values, _ = dima.min(dim=1)
         return min_values.mean(dim=0)
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> a8075c8cfff320acb546dce8e93d4f462105aacd
