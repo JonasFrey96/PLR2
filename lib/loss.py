@@ -111,35 +111,30 @@ class FocalLoss(_Loss):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.alpha = alpha
-        if isinstance(alpha,(float,int)): self.alpha = torch.Tensor([alpha,1-alpha])
-        if isinstance(alpha,list): self.alpha = torch.Tensor(alpha)
         self.size_average = size_average
 
-    def forward(self, input, target):
+    def forward(self, input_x, target):
         """
         semantic: N x H x W x C
-        object_ids: N
+        object_ids: N x H x W
         """
-        input = input.view(input.size(0), input.size(1) * input.size(2), -1) # N, H, W, C => N, H*W, C
-        input = input.contiguous().view(-1,input.size(2))   # N,H*W,C => N*H*W,C
-        target = target.view(-1,1)
+        N, H, W, C = input_x.shape
+        NHW = N * H * W
+        input_x = input_x.view(NHW, C) # N, H, W, C => N, H*W, C
+        target = target.view(NHW, 1)
 
-        logpt = F.log_softmax(input, dim=1)
-        pt = Variable(logpt.data.exp())
+        logpt = F.log_softmax(input_x, dim=1)
+        pt = F.softmax(input_x, dim=1)
 
-        if self.alpha is not None:
-            a_t_mask = np.tile(np.arange(input.size(1)), (input.size(0),1))
-            target_mask = np.tile(target.numpy(), (1, input.size(1)))
-            a_t = self.alpha[0].repeat(input.size(0),input.size(1))
-            a_t_mask = torch.BoolTensor(a_t_mask == target_mask)
-            a_t[a_t_mask] = self.alpha[1]
-            loss = -1 * a_t*(1-pt)**self.gamma * logpt
+        a_t = torch.ones((N*H*W, C), dtype=input_x.dtype).to(input_x.device) * (1.0 - self.alpha)
+        a_t.scatter_(1, target, self.alpha)
+
+        loss = -a_t * (1.0 - pt)**self.gamma * logpt
+
+        if self.size_average:
+            return loss.mean()
         else:
-            loss = -1 * (1-pt)**self.gamma * logpt
-
-        loss = -1 * a_t*(1-pt)**self.gamma * logpt
-        if self.size_average: return loss.mean()
-        else: return loss.sum()
+            return loss.sum()
 
 class MultiObjectADDLoss:
     def __init__(self, sym_list):

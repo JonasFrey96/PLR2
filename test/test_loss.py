@@ -89,17 +89,21 @@ class ADDLossTest(unittest.TestCase):
         self.assertAlmostEqual(value[1][0], np.linalg.norm(diff, 2))
 
 
-
 class FocalLossTest(unittest.TestCase):
     @classmethod
     def setUpClass(self):
+        self.alpha = 0.25
+        self.gamma = 1.0
+        self.loss = FocalLoss(gamma=self.gamma, alpha=self.alpha, size_average=False)
+
+    def test_loss(self):
         # make 3x3 ground truth label image
         target = np.zeros((1, 2, 2)) # create 2 x 2 image with 1 object and background (2 labels)
         target[0,1,0] = 1
         target[0,1,1] = 1
         target[0,0,1] = 2
-        self.target = torch.tensor(target, dtype=torch.int64)
-        
+        target = torch.tensor(target, dtype=torch.int64)
+
         inputs = np.ones((1, 2, 2, 3))*0.025 # N, H, W, C, default confidence 2.5%
         # set confidence 0.95 for all true positives
         inputs[0,0,0,0] = 0.95
@@ -107,13 +111,15 @@ class FocalLossTest(unittest.TestCase):
         inputs[0,1,0,1] = 0.95
         inputs[0,1,1,1] = 0.95
 
-        self.inputs = torch.Tensor(inputs)
+        inputs = torch.tensor(inputs)
+        logits = torch.log(inputs) + torch.log(torch.exp(inputs).sum(dim=3))[:, :, :, None]
 
-        self.loss = FocalLoss(gamma=1, alpha=0.25, size_average=False)
+        val = self.loss.forward(logits, target)
 
-    def test_loss(self):
-        val = self.loss.forward(self.inputs, self.target)
-        self.assertLessEqual(val.detach().numpy() - 3.1252615, 1e-6)
+        loss = 4.0 * -self.alpha * (1.0 - 0.95) ** self.gamma * np.log(0.95)
+        loss += 8.0 * -(1.0 - self.alpha) * (1.0 - 0.025) ** self.gamma * np.log(0.025)
+
+        self.assertAlmostEqual(val.item(), loss)
 
 if __name__ == "__main__":
     unittest.main()
