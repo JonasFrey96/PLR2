@@ -77,37 +77,12 @@ class ADDLoss(_Loss):
 
         return loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, w, refine, self.num_pt_mesh, self.sym_list)
 
-class KeypointLoss(_Loss):
-    def __init__(self, keypoint_weight=1.0, center_weight=1.0, semantic_weight=1.0):
-        super().__init__()
-        self.keypoint_weight = keypoint_weight
-        self.center_weight = center_weight
-        self.semantic_weight = semantic_weight
-        self.cross_entropy = nn.CrossEntropyLoss()
-
-    def forward(self, p_keypoints, p_centers, p_semantic, gt_keypoints, gt_centers, gt_semantic):
-        """
-        keypoints: N x H x W x K x 3
-        centers: N x H x W x 3
-        semantic: N x H x W x C
-        object_ids: N
-        """
-        loss_mask = gt_semantic != 0
-        keypoint_diff = torch.pow(p_keypoints - gt_keypoints, 2).sum(dim=1)
-        N = float(p_keypoints.shape[0])
-        keypoint_loss = keypoint_diff[loss_mask].mean()
-        center_diff = torch.pow(p_centers - gt_centers, 2).sum(dim=1)
-        center_loss = center_diff[loss_mask].mean()
-        semantic_loss = self.cross_entropy(p_semantic, gt_semantic)
-        return (self.keypoint_weight * keypoint_loss +
-                self.center_weight * center_loss +
-                self.semantic_weight * semantic_loss)
 
 class FocalLoss(_Loss):
     """Adapted from implementation by He et. al in PVN3D. Original code available
     at https://github.com/ethnhe/PVN3D.
     """
-    def __init__(self, gamma=0, alpha=0.25, size_average=True):
+    def __init__(self, gamma=1.0, alpha=0.25, size_average=True):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.alpha = alpha
@@ -120,7 +95,7 @@ class FocalLoss(_Loss):
         """
         N, H, W, C = input_x.shape
         NHW = N * H * W
-        input_x = input_x.view(NHW, C) # N, H, W, C => N, H*W, C
+        input_x = input_x.reshape(NHW, C) # N, H, W, C => N, H*W, C
         target = target.view(NHW, 1)
 
         logpt = F.log_softmax(input_x, dim=1)
@@ -135,6 +110,36 @@ class FocalLoss(_Loss):
             return loss.mean()
         else:
             return loss.sum()
+
+class KeypointLoss(_Loss):
+    def __init__(self, keypoint_weight=1.0, center_weight=1.0, semantic_weight=1.0):
+        super().__init__()
+        self.keypoint_weight = keypoint_weight
+        self.center_weight = center_weight
+        self.semantic_weight = semantic_weight
+        self.focal_loss = FocalLoss(gamma=2.0, alpha=0.25)
+
+    def forward(self, p_keypoints, p_centers, p_semantic, gt_keypoints, gt_centers, gt_semantic):
+        """
+        keypoints: N x K*3 x H x W
+        centers: N x 3 x H x W
+        semantic: N x C x H x W
+        object_ids: N
+        """
+        loss_mask = gt_semantic != 0
+        keypoint_diff = torch.pow(p_keypoints - gt_keypoints, 2).sum(dim=1)
+        N = float(p_keypoints.shape[0])
+        keypoint_loss = keypoint_diff[loss_mask].mean()
+        center_diff = torch.pow(p_centers - gt_centers, 2).sum(dim=1)
+        center_loss = center_diff[loss_mask].mean()
+
+        # N x C x H x W -> N x H x C x W -> N x H x W x C
+        p_semantic = p_semantic.transpose(1, 2).transpose(2, 3)
+        semantic_loss = self.focal_loss(p_semantic, gt_semantic)
+
+        return (self.keypoint_weight * keypoint_loss +
+                self.center_weight * center_loss +
+                self.semantic_weight * semantic_loss)
 
 class MultiObjectADDLoss:
     def __init__(self, sym_list):
@@ -195,7 +200,3 @@ class MultiObjectADDLoss:
         min_values, _ = dima.min(dim=1)
         return min_values.mean(dim=0)
 
-<<<<<<< HEAD
-
-=======
->>>>>>> a8075c8cfff320acb546dce8e93d4f462105aacd
