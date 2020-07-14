@@ -127,11 +127,14 @@ class KeypointLoss(_Loss):
         object_ids: N
         """
         loss_mask = gt_semantic != 0
-        keypoint_diff = torch.pow(p_keypoints - gt_keypoints, 2).sum(dim=1)
-        N = float(p_keypoints.shape[0])
-        keypoint_loss = keypoint_diff[loss_mask].mean()
-        center_diff = torch.pow(p_centers - gt_centers, 2).sum(dim=1)
-        center_loss = center_diff[loss_mask].mean()
+        N, _, H, W = p_keypoints.shape
+        loss_mask = loss_mask[:, None, :, :]
+        kp_mask = loss_mask.expand(-1, p_keypoints.shape[1], -1, -1)
+        NHW = float(N * H * W)
+        keypoint_loss = torch.pow(p_keypoints[kp_mask] - gt_keypoints[kp_mask], 2).sum() / NHW
+
+        c_mask = loss_mask.expand(-1, p_centers.shape[1], -1, -1)
+        center_loss = torch.pow(p_centers[c_mask] - gt_centers[c_mask], 2).sum() / NHW
 
         # N x C x H x W -> N x H x C x W -> N x H x W x C
         p_semantic = p_semantic.transpose(1, 2).transpose(2, 3)

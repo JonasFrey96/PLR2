@@ -12,12 +12,9 @@ import logging
 
 # misc
 import numpy as np
-import pandas as pd
 import random
 import sklearn
 from scipy.spatial.transform import Rotation as R
-from math import pi
-import coloredlogs
 import datetime
 
 sys.path.insert(0, os.getcwd())
@@ -34,8 +31,6 @@ from pytorch_lightning import Trainer, seed_everything
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint
-
-coloredlogs.install()
 
 from lib.loss import KeypointLoss, MultiObjectADDLoss
 from lib import keypoint_helper as kp_helper
@@ -363,7 +358,6 @@ def read_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    # for reproducability
     seed_everything(42)
 
     args = read_args()

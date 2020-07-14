@@ -134,80 +134,128 @@ class PoseNet(nn.Module):
 
 def pointwise_conv(in_features, maps, out_features):
     return nn.Sequential(
-        nn.ReLU(),
         nn.Conv1d(in_features, maps, kernel_size=1, bias=False),
-        nn.BatchNorm1d(maps),
         nn.ReLU(),
-        nn.Conv1d(maps, out_features, kernel_size=1, bias=False)
+        nn.BatchNorm1d(maps),
+        nn.Conv1d(maps, out_features, kernel_size=1, bias=True)
         )
 
-class BasicBlock(nn.Module):
-    def __init__(self, in_features, out_features, downsample=True):
+class Conv(nn.Module):
+    def __init__(self, in_features, out_features, kernel_size=3, padding=1, **kwargs):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_features, in_features, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(in_features)
-        if downsample:
-            self.pool = nn.MaxPool2d(2)
-        else:
-            self.pool = lambda x: x
-        self.conv2 = nn.Conv2d(in_features, out_features, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_features)
+        self.conv = nn.Conv2d(in_features, out_features, kernel_size, padding=padding, bias=False, **kwargs)
         self.relu = nn.ReLU()
-
-        if in_features != out_features:
-            self.map = nn.Sequential(nn.Conv2d(in_features, out_features, kernel_size=1, stride=1, padding=0, bias=False),
-                    nn.BatchNorm2d(out_features))
-        else:
-            self.map = lambda x: x
+        self.batch_norm = nn.BatchNorm2d(out_features)
 
     def forward(self, x):
-        identity = x
-        x = self.relu(self.bn1(self.conv1(x)))
-        x = self.pool(x)
-        out = self.bn2(self.conv2(x))
-        out += self.pool(self.map(identity))
-        return self.relu(out)
+        x = self.conv(x)
+        x = self.relu(x)
+        return self.batch_norm(x)
 
-from torchvision.models.segmentation.deeplabv3 import DeepLabHead
+
+class BasicBlock(nn.Module):
+    def __init__(self, in_features):
+        super().__init__()
+        features = in_features // 4
+        self.conv1x1 = Conv(in_features, features, kernel_size=1, stride=1, padding=0)
+        self.conv1 = Conv(features, features, kernel_size=3, dilation=1, padding=1)
+        self.conv2 = Conv(features, features, kernel_size=3, dilation=2, padding=2)
+        self.conv3 = Conv(features, features, kernel_size=3, dilation=3, padding=3)
+        self.conv4 = Conv(features, features, kernel_size=3, dilation=4, padding=4)
+        self.out1 = Conv(features, features, kernel_size=1, padding=0)
+        self.out2 = Conv(features, features, kernel_size=1, padding=0)
+        self.out3 = Conv(features, features, kernel_size=1, padding=0)
+        self.out4 = Conv(features, features, kernel_size=1, padding=0)
+
+    def forward(self, inputs):
+        x = self.conv1x1(inputs)
+        x1 = self.conv1(x)
+        x2 = self.conv2(x)
+        x3 = self.conv3(x)
+        x4 = self.conv4(x)
+        out1 = self.out1(x1)
+        summed = x1 + x2
+        out2 = self.out2(summed)
+        summed = summed + x3
+        out3 = self.out3(summed)
+        summed = summed + x4
+        out4 = self.out4(summed)
+        return inputs + torch.cat([out1, out2, out3, out4], dim=1)
+
+class Downsample(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.conv = Conv(in_features, out_features, kernel_size=2, stride=2, padding=0)
+
+    def forward(self, x):
+        return self.conv(x)
+
+class Upsample(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        features = in_features // 2
+        self.conv = nn.Sequential(
+                Conv(in_features, features, kernel_size=1, stride=1, padding=0),
+                nn.ConvTranspose2d(features, out_features, kernel_size=2, stride=2),
+                nn.ReLU(),
+                nn.BatchNorm2d(out_features))
+
+    def forward(self, x):
+        return self.conv(x)
+
 class KeypointNet(nn.Module):
     def __init__(self, num_points, num_obj, num_keypoints=8, num_classes=22):
         super().__init__()
-        self.features =  nn.Sequential(nn.Conv2d(6, 64, kernel_size=7, stride=2, padding=3, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU()) # might benefit from inplace
-        # 240 x 320
-        self.downsample_block1 = BasicBlock(64, 64)
-        # 120 x 160
-        self.downsample_block2 = BasicBlock(64, 128, downsample=False)
-        # 60 x 80
-        self.conv_block = BasicBlock(128, 128, downsample=False)
-        self.point_dimensions = 128
-        self.num_points = num_points
-        self.num_obj = num_obj
-        self.num_keypoints = num_keypoints
-        self.keypoint_features = num_keypoints * 3
+        self.features = Conv(6, 64, kernel_size=7, padding=3, stride=2)
+        self.conv1 = BasicBlock(64)
+        self.downsample1 = Downsample(64, 64)
+        self.conv2 = BasicBlock(64)
+        self.downsample2 = Downsample(64, 128)
+        self.conv3 = BasicBlock(128)
+        self.downsample3 = Downsample(128, 256)
+        self.conv4 = BasicBlock(256)
 
-        self.keypoint_head = DeepLabHead(128 + 3, num_keypoints * 3)
-        self.center_head = DeepLabHead(128 + 3, 3)
-        self.segmentation_head = DeepLabHead(128, num_classes)
+        self.upsample1 = Upsample(512, 128)
+        self.conv5 = BasicBlock(128)
+        self.upsample2 = Upsample(256, 64)
+        self.conv6 = BasicBlock(64)
+        self.upsample3 = Upsample(128, 64)
+        self.conv7 = BasicBlock(64)
+        self.upsample4 = Upsample(128, 64)
+
+        self.keypoints_out = num_keypoints * 3
+        self.num_classes = num_classes
+        self.keypoint_head = pointwise_conv(70, 32, self.keypoints_out)
+        self.center_head = pointwise_conv(70, 32, 3)
+        self.segmentation_head = pointwise_conv(70, 64, num_classes)
 
     def forward(self, img, points):
         N, C, H, W = img.shape
-        x = torch.cat([img, points], dim=1)
-        x = self.features(x)
-        x = self.downsample_block1(x)
-        x = self.downsample_block2(x)
-        x = self.conv_block(x)
+        inputs = torch.cat([img, points], dim=1)
+        features = self.features(inputs) # 240 x 320
+        x = self.conv1(features)
+        x1 = self.downsample1(x) # 120 x 160
+        x = self.conv2(x1)
+        x2 = self.downsample2(x) # 60 x 80
+        x = self.conv3(x2)
+        x3 = self.downsample3(x) # 30 x 40
+        x = self.conv4(x3)
 
-        points = F.interpolate(points, [120, 160], mode='bilinear', align_corners=True)
-        x_points = torch.cat([x, points], dim=1)
-        keypoints = self.keypoint_head(x_points)
-        centers = self.center_head(x_points)
-        segmentation = self.segmentation_head(x)
+        x = self.upsample1(torch.cat([x, x3], dim=1)) # 60 x 80
+        x = self.conv5(x)
+        x = self.upsample2(torch.cat([x, x2], dim=1)) # 120 x 160
+        x = self.conv6(x)
+        x = self.upsample3(torch.cat([x, x1], dim=1)) # 240 x 320
+        x = self.conv7(x)
+        x = self.upsample4(torch.cat([x, features], dim=1)) # 480 x 640
 
-        keypoints = F.interpolate(keypoints, [480, 640], mode='bilinear', align_corners=True)
-        centers = F.interpolate(centers, [480, 640], mode='bilinear', align_corners=True)
-        segmentation = F.interpolate(segmentation, [480, 640], mode='bilinear', align_corners=True)
+        x = torch.cat([x, inputs], dim=1)
+
+        x = x.view(N, 70, H * W)
+
+        keypoints = self.keypoint_head(x).view(N, self.keypoints_out, H, W)
+        centers = self.center_head(x).view(N, 3, H, W)
+        segmentation = self.segmentation_head(x).view(N, self.num_classes, H, W)
 
         return keypoints, centers, segmentation
 
