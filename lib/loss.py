@@ -103,7 +103,6 @@ class KeypointLoss(_Loss):
                 self.center_weight * center_loss +
                 self.semantic_weight * semantic_loss)
 
-<<<<<<< HEAD
 class FocalLoss(_Loss):
     """Adapted from implementation by He et. al in PVN3D. Original code available
     at https://github.com/ethnhe/PVN3D.
@@ -141,7 +140,6 @@ class FocalLoss(_Loss):
         loss = -1 * a_t*(1-pt)**self.gamma * logpt
         if self.size_average: return loss.mean()
         else: return loss.sum()
-=======
 
 class MultiObjectADDLoss:
     def __init__(self, sym_list):
@@ -203,4 +201,3 @@ class MultiObjectADDLoss:
         return min_values.mean(dim=0)
 
 
->>>>>>> 30685f397cc387655c85935d287af7432bd21041
