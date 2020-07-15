@@ -536,8 +536,7 @@ class YCB(Backend):
         cad_dict = {}
 
         for path in cad_paths:
-            input_file = open(
-                '{0}/points.xyz'.format(path))
+            input_file = open(os.path.join(path, 'points.xyz'))
 
             cld = []
             while 1:

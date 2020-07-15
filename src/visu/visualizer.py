@@ -100,6 +100,15 @@ class Visualizer():
         if self.writer is not None:
             self.writer.add_image(tag, local_image, global_step=epoch, dataformats="HWC")
 
+    def plot_segmentation(self, tag, epoch, label, store):
+        if label.dtype == np.float32:
+            label = label.round()
+        label = label.astype(np.uint8)
+        if store:
+            save_image(label, tag=f"epoch_{epoch}_{tag}", p_store=self.p_visu)
+        if self.writer is not None:
+            self.writer.add_image(tag, label[:, :, None], global_step=epoch, dataformats="HWC")
+
     def plot_estimated_pose(self, tag, epoch, img, points, trans=[[0, 0, 0]], rot_mat=[[1, 0, 0], [0, 1, 0], [0, 0, 1]], cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, store=False, jupyter=False, w=2):
         """
         tag := tensorboard tag

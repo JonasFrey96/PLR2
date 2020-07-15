@@ -61,12 +61,8 @@ class TrackNet6D(LightningModule):
             num_obj=exp['d_train']['objects'])
 
         if exp['estimator_restore']:
-            try:
-                self.estimator.load_state_dict(torch.load(
-                    exp['estimator_load']))
-            except:
-                state_dict = torch.load(exp['estimator_load'])
-                self.load_my_state_dict(state_dict)
+            state_dict = torch.load(exp['estimator_load'])
+            self.load_my_state_dict(state_dict)
 
         num_poi = exp['d_train']['num_pt_mesh_small']
         self.criterion = KeypointLoss(num_poi)
@@ -276,8 +272,8 @@ class TrackNet6D(LightningModule):
 
         return {**avg_dict, 'log': tensorboard_log}
 
-    def visualize(self, batch_idx, predicted_keypoints, predicted_centers, points, label,
-            gt_keypoints, gt_centers, cam, img_orig, unique_desig):
+    def visualize(self, batch_idx, predicted_keypoints, predicted_centers, predicted_label,
+            points, label, gt_keypoints, gt_centers, cam, img_orig, unique_desig):
         img_orig = img_orig.cpu().numpy()
         img_orig = ((img_orig + 1.0) * 127.5).astype(np.uint8)
         img_orig = img_orig.transpose([0, 2, 3, 1])
@@ -336,6 +332,12 @@ class TrackNet6D(LightningModule):
                 cam_cy=cam[random_index, 1].item(),
                 cam_fx=cam[random_index, 2].item(),
                 cam_fy=cam[random_index, 3].item(),
+                store=True)
+
+        predicted_label = predicted_label[random_index].argmax(dim=0)
+        self.visualizer.plot_segmentation(tag='predicted_segmentation_{}'.format(unique_desig[random_index].replace('/', '_')),
+                epoch=self.current_epoch,
+                label=predicted_label.cpu().numpy(),
                 store=True)
 
     def configure_optimizers(self):
