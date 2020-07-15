@@ -112,7 +112,7 @@ class FocalLoss(_Loss):
             return loss.sum()
 
 class KeypointLoss(_Loss):
-    def __init__(self, keypoint_weight=1.0, center_weight=1.0, semantic_weight=1.0):
+    def __init__(self, keypoint_weight=10.0, center_weight=10.0, semantic_weight=1.0):
         super().__init__()
         self.keypoint_weight = keypoint_weight
         self.center_weight = center_weight
@@ -140,9 +140,12 @@ class KeypointLoss(_Loss):
         p_semantic = p_semantic.transpose(1, 2).transpose(2, 3)
         semantic_loss = self.focal_loss(p_semantic, gt_semantic)
 
-        return (self.keypoint_weight * keypoint_loss +
+        return ((self.keypoint_weight * keypoint_loss +
                 self.center_weight * center_loss +
-                self.semantic_weight * semantic_loss)
+                self.semantic_weight * semantic_loss),
+                (keypoint_loss.detach(),
+                center_loss.detach(),
+                semantic_loss.detach()))
 
 class MultiObjectADDLoss:
     def __init__(self, sym_list):

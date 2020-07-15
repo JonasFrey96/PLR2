@@ -123,6 +123,9 @@ class TrackNet6D(LightningModule):
     def training_step(self, batch, batch_idx):
         total_loss = 0
         l = len(batch)
+        keypoint_loss = 0
+        center_loss = 0
+        semantic_loss = 0
         for frame in batch:
             # unpack the batch and apply forward pass
             if frame[0].dtype == torch.bool:
@@ -132,15 +135,29 @@ class TrackNet6D(LightningModule):
                     objects_in_scene, unique_desig) = frame
 
             predicted_keypoints, object_centers, segmentation = self(img, points)
-            loss = self.criterion(predicted_keypoints, object_centers, segmentation,
+            loss, losses = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
             total_loss += loss
+
+            keypoint_loss += losses[0]
+            center_loss += losses[1]
+            semantic_loss += losses[2]
+
         total_loss = total_loss / l
-        tensorboard_logs = {'train_loss': total_loss}
-        return {'loss': total_loss, 'log': tensorboard_logs, 'progress_bar': {'train_loss': total_loss}}
+        tensorboard_logs = {'train_loss': total_loss,
+                'keypoint_loss': keypoint_loss.item(),
+                'center_loss': center_loss.item(),
+                'semantic_loss': semantic_loss.item()}
+        return {'loss': total_loss, 'keypoint_loss': keypoint_loss, 'center_loss': center_loss,
+                'semantic_loss': semantic_loss, 'log': tensorboard_logs,
+                'progress_bar': {'train_loss': total_loss, 'kp_loss': keypoint_loss, 's_loss': semantic_loss}}
 
     def validation_step(self, batch, batch_idx):
         total_loss = 0
+        keypoint_loss = 0
+        center_loss = 0
+        semantic_loss = 0
+
         model_keypoints = self.keypoints.to(self.device)
         object_models = self.object_models.to(self.device)
 
@@ -154,7 +171,7 @@ class TrackNet6D(LightningModule):
                     objects_in_scene, unique_desig) = frame
 
             predicted_keypoints, object_centers, segmentation = self(img, points)
-            loss = self.criterion(predicted_keypoints, object_centers, segmentation,
+            loss, losses = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
 
             N, _, H, W = gt_keypoints.shape
@@ -163,27 +180,39 @@ class TrackNet6D(LightningModule):
             add_loss = self.add_loss(points, predicted_keypoints, gt_keypoints, label,
                     model_keypoints, object_models, objects_in_scene, add_losses)
 
-            if 'val_loss' in self._dict_track.keys():
-                self._dict_track['val_loss'].append(loss.item())
-            else:
-                self._dict_track['val_loss'] = [loss.item()]
+            if 'val_loss' not in self._dict_track:
+                self._dict_track['val_loss'] = []
+            self._dict_track['val_loss'].append(loss)
 
             if self.number_images_log_val > self.counter_images_logged:
-                self.visualize(batch_idx, predicted_keypoints, object_centers, points, label, gt_keypoints,
+                self.visualize(batch_idx, predicted_keypoints, object_centers, segmentation, points, label, gt_keypoints,
                         gt_centers, cam, img, unique_desig)
                 self.counter_images_logged += 1
 
+            keypoint_loss += losses[0]
+            center_loss += losses[1]
+            semantic_loss += losses[2]
             total_loss += loss
 
         add_log = {}
         for key, values in add_losses.items():
             add_log['add_obj_{}'.format(key)] = np.mean(values)
-        tensorboard_logs = {'val_loss': total_loss / len(batch), **add_log}
-        return {'val_loss': total_loss / len(batch), 'log': tensorboard_logs}
+        tensorboard_logs = {'val_loss': total_loss / len(batch), **add_log,
+                'keypoint_loss': keypoint_loss.item(),
+                'center_loss': center_loss.item(),
+                'semantic_loss': semantic_loss.item()}
+        return {'val_loss': total_loss / len(batch),
+                'keypoint_loss': keypoint_loss,
+                'center_loss': center_loss,
+                'semantic_loss': semantic_loss,
+                'log': tensorboard_logs}
 
     def test_step(self, batch, batch_idx):
         # used for tensorboard logging
         total_loss = 0
+        keypoint_loss = 0
+        center_loss = 0
+        semantic_loss = 0
 
         for frame in batch:
 
@@ -192,35 +221,42 @@ class TrackNet6D(LightningModule):
 
             (points, img, label, gt_keypoints, gt_centers, cam, objects_in_scene, unique_desig) = frame
             predicted_keypoints, object_centers, segmentation = self(img, points)
-            loss = self.criterion(predicted_keypoints, object_centers, segmentation,
+            loss, losses = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
 
             # self._dict_track is used to log whole epoch
-            if f'test_loss' in self._dict_track.keys():
-                self._dict_track[f'test_loss'].append(float(loss))
-            else:
-                self._dict_track[f'test_loss'] = [float(loss)]
+            if 'test_loss' not in self._dict_track:
+                self._dict_track['test_loss'] = []
+            self._dict_track[f'test_loss'].append(loss)
 
             if self.number_images_log_test > self.counter_images_logged:
                 N, _, H, W = gt_keypoints.shape
                 predicted_keypoints = predicted_keypoints.reshape(N, self.K, 3, H, W)
                 gt_keypoints = gt_keypoints.reshape(N, self.K, 3, H, W)
-                self.visualize(batch_idx, predicted_keypoints, object_centers, points, label, gt_keypoints,
+                self.visualize(batch_idx, predicted_keypoints, object_centers, segmentation, points, label, gt_keypoints,
                         gt_centers, cam, img, unique_desig)
                 self.counter_images_logged += 1
 
+            keypoint_loss += losses[0]
+            center_loss += losses[1]
+            semantic_loss += losses[2]
             total_loss += loss
 
-        tensorboard_logs = {'test_loss': total_loss / len(batch)}
+        tensorboard_logs = {'test_loss': total_loss / len(batch),
+                'keypoint_loss': keypoint_loss,
+                'center_loss': center_loss,
+                'semantic_loss': semantic_loss}
 
         return {**tensorboard_logs,
+                'keypoint_loss': keypoint_loss,
+                'center_loss': center_loss,
+                'semantic_loss': semantic_loss,
                 'log': tensorboard_logs}
 
     def test_epoch_end(self, outputs):
         avg_dict = {}
-        for old_key in list(self._dict_track.keys()):
-            avg_dict['avg_' +
-                     old_key] = float(np.mean(np.array(self._dict_track[old_key])))
+        for key, values in self._dict_track.items():
+            avg_dict['avg_' + key] = torch.stack(values).mean()
         self._dict_track = {}
 
         return {
@@ -228,16 +264,15 @@ class TrackNet6D(LightningModule):
 
     def validation_epoch_end(self, outputs):
         avg_dict = {}
-        for old_key in list(self._dict_track.keys()):
-            avg_dict['avg_' + old_key] = np.mean(self._dict_track[old_key])
+        for key, values in self._dict_track.items():
+            avg_dict['avg_' + key] = torch.stack(values, dim=0).mean()
         self._dict_track = {}
 
         self.counter_images_logged = 0  # reset image log counter
 
         tensorboard_log = copy.deepcopy(avg_dict)
-        for k in avg_dict.keys():
-            avg_dict[k] = torch.tensor(
-                avg_dict[k], dtype=torch.float32, device=self.device)
+        for key, value in tensorboard_log.items():
+            tensorboard_log[key] = value.item()
 
         return {**avg_dict, 'log': tensorboard_log}
 
