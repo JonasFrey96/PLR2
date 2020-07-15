@@ -21,4 +21,4 @@ lib/knn/dist/
 lib/knn/knn_pytorch/*.so
 
 .vscode/settings.json
-scripts/viewpoint_manager.py
+scripts/viewpoint_manager.ipynb
