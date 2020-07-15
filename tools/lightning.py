@@ -355,6 +355,7 @@ def read_args():
                         help='The environment yaml file.')
     parser.add_argument('--gpus', type=int, default=1, help="How many gpus to use in training.")
     parser.add_argument('-w', '--workers', default=None)
+    parser.add_argument('--ycb', default=None, help="Override the ycb video dataset path (e.g. if setting it from a variable).")
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -371,6 +372,9 @@ if __name__ == "__main__":
         # This is for debugging. Can easily set workers to 0 so data is loaded on the main thread and
         # the debugger can be loaded.
         exp['loader']['workers'] = int(args.workers)
+
+    if args.ycb is not None:
+        env['p_ycb'] = args.ycb
 
     """
     Trainer args (gpus, num_nodes, etc…) && Program arguments (data_path, cluster_email, etc…)

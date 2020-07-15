@@ -134,24 +134,23 @@ class PoseNet(nn.Module):
 
 def pointwise_conv(in_features, maps, out_features):
     return nn.Sequential(
-        nn.Conv1d(in_features, maps, kernel_size=1, bias=False),
+        nn.Conv2d(in_features, maps, kernel_size=1, padding=0, bias=False),
+        nn.BatchNorm2d(maps),
         nn.ReLU(),
-        nn.BatchNorm1d(maps),
-        nn.Conv1d(maps, out_features, kernel_size=1, bias=True)
+        nn.Conv2d(maps, out_features, kernel_size=1, padding=0, bias=True)
         )
 
 class Conv(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=3, padding=1, **kwargs):
         super().__init__()
         self.conv = nn.Conv2d(in_features, out_features, kernel_size, padding=padding, bias=False, **kwargs)
-        self.relu = nn.ReLU()
         self.batch_norm = nn.BatchNorm2d(out_features)
+        self.relu = nn.ReLU()
 
     def forward(self, x):
         x = self.conv(x)
-        x = self.relu(x)
-        return self.batch_norm(x)
-
+        x = self.batch_norm(x)
+        return self.relu(x)
 
 class BasicBlock(nn.Module):
     def __init__(self, in_features):
@@ -162,10 +161,7 @@ class BasicBlock(nn.Module):
         self.conv2 = Conv(features, features, kernel_size=3, dilation=2, padding=2)
         self.conv3 = Conv(features, features, kernel_size=3, dilation=3, padding=3)
         self.conv4 = Conv(features, features, kernel_size=3, dilation=4, padding=4)
-        self.out1 = Conv(features, features, kernel_size=1, padding=0)
-        self.out2 = Conv(features, features, kernel_size=1, padding=0)
-        self.out3 = Conv(features, features, kernel_size=1, padding=0)
-        self.out4 = Conv(features, features, kernel_size=1, padding=0)
+        self.out = Conv(in_features, in_features, kernel_size=1, stride=1, padding=0)
 
     def forward(self, inputs):
         x = self.conv1x1(inputs)
@@ -173,14 +169,12 @@ class BasicBlock(nn.Module):
         x2 = self.conv2(x)
         x3 = self.conv3(x)
         x4 = self.conv4(x)
-        out1 = self.out1(x1)
-        summed = x1 + x2
-        out2 = self.out2(summed)
-        summed = summed + x3
-        out3 = self.out3(summed)
-        summed = summed + x4
-        out4 = self.out4(summed)
-        return inputs + torch.cat([out1, out2, out3, out4], dim=1)
+        x12 = x1 + x2
+        x123 = x1 + x2 + x3
+        x1234 = x1 + x2 + x3 + x4
+
+        concat = torch.cat([x1, x12, x123, x1234], dim=1)
+        return inputs + self.out(concat)
 
 class Downsample(nn.Module):
     def __init__(self, in_features, out_features):
@@ -193,7 +187,7 @@ class Downsample(nn.Module):
 class Upsample(nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()
-        features = in_features // 2
+        features = in_features // 4
         self.conv = nn.Sequential(
                 Conv(in_features, features, kernel_size=1, stride=1, padding=0),
                 nn.ConvTranspose2d(features, out_features, kernel_size=2, stride=2),
@@ -213,7 +207,7 @@ class KeypointNet(nn.Module):
         self.downsample2 = Downsample(64, 128)
         self.conv3 = BasicBlock(128)
         self.downsample3 = Downsample(128, 256)
-        self.conv4 = BasicBlock(256)
+        self.conv4 = nn.Sequential(BasicBlock(256), BasicBlock(256))
 
         self.upsample1 = Upsample(512, 128)
         self.conv5 = BasicBlock(128)
@@ -221,7 +215,6 @@ class KeypointNet(nn.Module):
         self.conv6 = BasicBlock(64)
         self.upsample3 = Upsample(128, 64)
         self.conv7 = BasicBlock(64)
-        self.upsample4 = Upsample(128, 64)
 
         self.keypoints_out = num_keypoints * 3
         self.num_classes = num_classes
@@ -247,15 +240,18 @@ class KeypointNet(nn.Module):
         x = self.conv6(x)
         x = self.upsample3(torch.cat([x, x1], dim=1)) # 240 x 320
         x = self.conv7(x)
-        x = self.upsample4(torch.cat([x, features], dim=1)) # 480 x 640
 
-        x = torch.cat([x, inputs], dim=1)
+        inputs_small = F.interpolate(inputs, size=[240, 320], mode='bilinear')
 
-        x = x.view(N, 70, H * W)
+        x = torch.cat([x, inputs_small], dim=1)
 
-        keypoints = self.keypoint_head(x).view(N, self.keypoints_out, H, W)
-        centers = self.center_head(x).view(N, 3, H, W)
-        segmentation = self.segmentation_head(x).view(N, self.num_classes, H, W)
+        keypoints = self.keypoint_head(x)
+        centers = self.center_head(x)
+        segmentation = self.segmentation_head(x)
+
+        keypoints = F.interpolate(keypoints, size=[480, 640], mode='bilinear')
+        centers = F.interpolate(centers, size=[480, 640], mode='bilinear')
+        segmentation = F.interpolate(segmentation, size=[480, 640], mode='bilinear')
 
         return keypoints, centers, segmentation
 
