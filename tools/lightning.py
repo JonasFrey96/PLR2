@@ -223,7 +223,7 @@ class TrackNet6D(LightningModule):
             # self._dict_track is used to log whole epoch
             if 'test_loss' not in self._dict_track:
                 self._dict_track['test_loss'] = []
-            self._dict_track[f'test_loss'].append(loss)
+            self._dict_track['test_loss'].append(loss)
 
             if self.number_images_log_test > self.counter_images_logged:
                 N, _, H, W = gt_keypoints.shape

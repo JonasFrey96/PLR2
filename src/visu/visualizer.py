@@ -9,6 +9,7 @@ import copy
 import torch
 import numpy as np
 import k3d
+from matplotlib import cm
 
 KEYPOINT_COLORS = np.array([
     [  0,   0, 127],
@@ -20,6 +21,9 @@ KEYPOINT_COLORS = np.array([
     [255, 148,   0],
     [255,  29,   0]], dtype=np.uint8)
 CENTER_COLOR = np.array([255, 0, 0], dtype=np.uint8)
+
+jet = cm.get_cmap('jet')
+SEG_COLORS = (np.stack([jet(v) for v in np.linspace(0, 1, 22)]) * 255).astype(np.uint8)
 
 def project_points(points, cam_cx, cam_cy, cam_fx, cam_fy):
     """
@@ -103,11 +107,15 @@ class Visualizer():
     def plot_segmentation(self, tag, epoch, label, store):
         if label.dtype == np.float32:
             label = label.round()
-        label = label.astype(np.uint8)
+        image_out = np.zeros((label.shape[0], label.shape[1], 3), dtype=np.uint8)
+        for h in range(label.shape[0]):
+            for w in range(label.shape[1]):
+                image_out[h, w, :] = SEG_COLORS[label[h, w]][:3]
+
         if store:
-            save_image(label, tag=f"epoch_{epoch}_{tag}", p_store=self.p_visu)
+            save_image(image_out, tag=f"epoch_{epoch}_{tag}", p_store=self.p_visu)
         if self.writer is not None:
-            self.writer.add_image(tag, label[:, :, None], global_step=epoch, dataformats="HWC")
+            self.writer.add_image(tag, image_out, global_step=epoch, dataformats="HWC")
 
     def plot_estimated_pose(self, tag, epoch, img, points, trans=[[0, 0, 0]], rot_mat=[[1, 0, 0], [0, 1, 0], [0, 0, 1]], cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, store=False, jupyter=False, w=2):
         """
