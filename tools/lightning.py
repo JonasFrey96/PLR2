@@ -334,6 +334,12 @@ class TrackNet6D(LightningModule):
                 cam_fy=cam[random_index, 3].item(),
                 store=True)
 
+        label = label[random_index]
+        self.visualizer.plot_segmentation(tag='gt_segmentation_{}'.format(unique_desig[random_index].replace('/', '_')),
+                epoch=self.current_epoch,
+                label=label.cpu().numpy(),
+                store=True)
+
         predicted_label = predicted_label[random_index].argmax(dim=0)
         self.visualizer.plot_segmentation(tag='predicted_segmentation_{}'.format(unique_desig[random_index].replace('/', '_')),
                 epoch=self.current_epoch,
