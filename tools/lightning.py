@@ -34,7 +34,6 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 from lib.loss import KeypointLoss, MultiObjectADDLoss
 from lib import keypoint_helper as kp_helper
-from lib.loss_refiner import Loss_refine
 from lib.network import KeypointNet
 
 # dataset
@@ -56,16 +55,13 @@ class TrackNet6D(LightningModule):
         self.validation_size = 0.05
         self.env, self.exp = env, exp
 
-        self.estimator = KeypointNet(
-            num_points=exp['d_train']['num_points'],
-            num_obj=exp['d_train']['objects'])
+        self.estimator = KeypointNet(**exp['net'])
 
         if exp['estimator_restore']:
             state_dict = torch.load(exp['estimator_load'])
             self.load_my_state_dict(state_dict)
 
-        num_poi = exp['d_train']['num_pt_mesh_small']
-        self.criterion = KeypointLoss(num_poi)
+        self.criterion = KeypointLoss(**exp['loss'])
         self.add_loss = MultiObjectADDLoss(exp['d_train']['obj_list_sym'])
 
         self.refine = False
@@ -99,19 +95,13 @@ class TrackNet6D(LightningModule):
         self.keypoints = dataset_train.keypoints()
         self.K = self.keypoints.shape[1]
 
-    def load_my_state_dict(self, state_dict):
-        own_state = self.estimator.state_dict()
-        for name, param in state_dict.items():
-            if name not in own_state:
-                continue
-            if param.shape != own_state[name].shape:
-                _a, _b, _c = param.shape
-                own_state[name][:_a, :_b, :_c] = param
-                print(name, ': ', own_state[name].shape,
-                      ' mergerd with ', param.shape)
-            else:
-                own_state[name] = param
-                print('worked for ', name)
+    def load_my_state_dict(self, state):
+        new_state = {}
+        for key, value in state['state_dict'].items():
+            if key.index('estimator.') == 0:
+                key = key.replace('estimator.', '')
+            new_state[key] = value
+        self.estimator.load_state_dict(new_state)
 
     def forward(self, img, points):
         return self.estimator(img, points)
@@ -399,6 +389,7 @@ def read_args():
     parser.add_argument('--gpus', type=int, default=1, help="How many gpus to use in training.")
     parser.add_argument('-w', '--workers', default=None)
     parser.add_argument('--ycb', default=None, help="Override the ycb video dataset path (e.g. if setting it from a variable).")
+    parser.add_argument('--fp16', action='store_true', help='16-bit precision training')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -471,12 +462,13 @@ if __name__ == "__main__":
     )
 
     trainer = Trainer(gpus=args.gpus,
-                      num_nodes=1,
-                      default_root_dir=model_path,
-                      checkpoint_callback=checkpoint_callback,
-                      early_stop_callback=early_stop_callback,
-                      terminate_on_nan=True,
-                      fast_dev_run=args.dev)
+            precision=16 if args.fp16 else 32,
+            default_root_dir=model_path,
+            checkpoint_callback=checkpoint_callback,
+            early_stop_callback=early_stop_callback,
+            terminate_on_nan=True,
+            distributed_backend='ddp',
+            fast_dev_run=args.dev)
 
     trainer.fit(model)
     trainer.test(model)

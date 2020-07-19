@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import numpy as np
 sys.path.append(os.getcwd())
 from lib.loss import KeypointLoss, FocalLoss, MultiObjectADDLoss
+from torch import optim
 
 def build_cube():
     x, y, z = np.eye(3)
@@ -97,29 +98,85 @@ class FocalLossTest(unittest.TestCase):
         self.loss = FocalLoss(gamma=self.gamma, alpha=self.alpha, size_average=False)
 
     def test_loss(self):
-        # make 3x3 ground truth label image
-        target = np.zeros((1, 2, 2)) # create 2 x 2 image with 1 object and background (2 labels)
+        target = np.zeros((1, 2, 2)) # create 2 x 2 image with 2 objects and background (2 labels)
         target[0,1,0] = 1
         target[0,1,1] = 1
         target[0,0,1] = 2
         target = torch.tensor(target, dtype=torch.int64)
 
-        inputs = np.ones((1, 2, 2, 3))*0.025 # N, H, W, C, default confidence 2.5%
+        inputs = np.ones((1, 3, 2, 2))*0.025 # N, H, W, C, default confidence 2.5%
         # set confidence 0.95 for all true positives
         inputs[0,0,0,0] = 0.95
-        inputs[0,0,1,2] = 0.95
-        inputs[0,1,0,1] = 0.95
+        inputs[0,1,1,0] = 0.95
         inputs[0,1,1,1] = 0.95
+        inputs[0,2,0,1] = 0.95
 
         inputs = torch.tensor(inputs)
-        logits = torch.log(inputs) + torch.log(torch.exp(inputs).sum(dim=3))[:, :, :, None]
+        logits = torch.log(inputs) + torch.log(torch.exp(inputs).sum(dim=1))[:, None, :, :]
 
-        val = self.loss.forward(logits, target)
+        val = self.loss(logits, target)
 
-        loss = 4.0 * -self.alpha * (1.0 - 0.95) ** self.gamma * np.log(0.95)
-        loss += 8.0 * -(1.0 - self.alpha) * (1.0 - 0.025) ** self.gamma * np.log(0.025)
+        loss = 3.0 * -self.alpha * (1.0 - 0.95) ** self.gamma * np.log(0.95)
+        loss += -(1.0 - self.alpha) * (1.0 - 0.95) ** self.gamma * np.log(0.95)
 
         self.assertAlmostEqual(val.item(), loss)
+
+    def test_batch(self):
+        target = np.zeros((2, 2, 2))
+        target[0, 1, 0] = 1
+        target[0, 1, 1] = 1
+        target[0, 0, 1] = 2
+        target[1, 0, 0] = 1
+        target[1, 0, 1] = 1
+        target = torch.tensor(target, dtype=torch.int64)
+
+        inputs = np.ones((2, 3, 2, 2)) * 0.025 # N, H, W, C, default confidence 2.5%
+        # set confidence 0.95 for all true positives
+        inputs[0, 0, 0, 0] = 0.95
+        inputs[0, 1, 1, 0] = 0.95
+        inputs[0, 1, 1, 1] = 0.95
+        inputs[0, 2, 0, 1] = 0.95
+        inputs[1, 1, 0, 0] = 0.95
+        inputs[1, 1, 0, 1] = 0.95
+        inputs[1, 0, 1, 0] = 0.95
+        inputs[1, 0, 1, 1] = 0.95
+
+        inputs = torch.tensor(inputs)
+        logits = torch.log(inputs) + torch.log(torch.exp(inputs).sum(dim=1))[:, None, :, :]
+
+        val = self.loss(logits, target)
+
+        loss = 5.0 * -self.alpha * (1.0 - 0.95) ** self.gamma * np.log(0.95)
+        loss += 3.0 * -(1.0 - self.alpha) * (1.0 - 0.95) ** self.gamma * np.log(0.95)
+
+        self.assertAlmostEqual(val.item(), loss)
+
+    def test_optimal(self):
+        target = torch.zeros(1, 2, 2).to(torch.int64)
+        target[0, 0, 1] = 1
+
+        inputs = np.zeros((1, 3, 2, 2))
+        inputs[0, 0, 0, 0] = 1.0
+        inputs[0, 1, 0, 1] = 1.0
+        inputs[0, 0, 1, 0] = 1.0
+        inputs[0, 0, 1, 1] = 1.0
+        inputs = torch.tensor(inputs, dtype=torch.float32, requires_grad=True)
+        logits = torch.log(inputs + 1e-16) + torch.log(torch.exp(inputs).sum(dim=1))[:, None, :, :]
+
+        loss = self.loss(logits, target)
+        self.assertAlmostEqual(loss.item(), 0.0, 5)
+
+        optimizer = optim.SGD([inputs], lr=1e-1)
+        for _ in range(10):
+            logits = torch.log(inputs + 1e-16) + torch.log(torch.exp(inputs).sum(dim=1))[:, None, :, :]
+            loss = self.loss(logits, target)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            self.assertAlmostEqual(loss.item(), 0.0, 5)
+
+
+
 
 if __name__ == "__main__":
     unittest.main()

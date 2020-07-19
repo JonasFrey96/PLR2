@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 from torch.nn import functional as F
-from lib.knn.__init__ import KNearestNeighbor
+# from lib.knn.__init__ import KNearestNeighbor
 from lib import keypoint_helper
 
 def loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, w, refine, num_point_mesh, sym_list):
@@ -79,10 +79,7 @@ class ADDLoss(_Loss):
 
 
 class FocalLoss(_Loss):
-    """Adapted from implementation by He et. al in PVN3D. Original code available
-    at https://github.com/ethnhe/PVN3D.
-    """
-    def __init__(self, gamma=1.0, alpha=0.25, size_average=True):
+    def __init__(self, gamma=2.0, alpha=0.25, size_average=True):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.alpha = alpha
@@ -90,21 +87,21 @@ class FocalLoss(_Loss):
 
     def forward(self, input_x, target):
         """
-        semantic: N x H x W x C
+        semantic: N x C x H x W
         object_ids: N x H x W
         """
-        N, H, W, C = input_x.shape
-        NHW = N * H * W
-        input_x = input_x.reshape(NHW, C) # N, H, W, C => N, H*W, C
-        target = target.view(NHW, 1)
+        N, C, H, W = input_x.shape
 
-        logpt = F.log_softmax(input_x, dim=1)
-        pt = F.softmax(input_x, dim=1)
+        logp = F.log_softmax(input_x, dim=1)
+        p = torch.exp(logp)
 
-        a_t = torch.ones((N*H*W, C), dtype=input_x.dtype).to(input_x.device) * (1.0 - self.alpha)
-        a_t.scatter_(1, target, self.alpha)
+        logp_t = -F.cross_entropy(input_x, target, reduce=False)
+        pt = torch.exp(logp_t)
 
-        loss = -a_t * (1.0 - pt)**self.gamma * logpt
+        a_t = torch.ones_like(target) * self.alpha
+        a_t[target == 0] = (1.0 - self.alpha)
+
+        loss = -a_t * torch.pow(1.0 - pt, self.gamma) * logp_t
 
         if self.size_average:
             return loss.mean()
@@ -112,7 +109,7 @@ class FocalLoss(_Loss):
             return loss.sum()
 
 class KeypointLoss(_Loss):
-    def __init__(self, keypoint_weight=10.0, center_weight=10.0, semantic_weight=1.0):
+    def __init__(self, keypoint_weight=1.0, center_weight=1.0, semantic_weight=1.0):
         super().__init__()
         self.keypoint_weight = keypoint_weight
         self.center_weight = center_weight
@@ -136,8 +133,6 @@ class KeypointLoss(_Loss):
         c_mask = loss_mask.expand(-1, p_centers.shape[1], -1, -1)
         center_loss = torch.pow(p_centers[c_mask] - gt_centers[c_mask], 2).sum() / NHW
 
-        # N x C x H x W -> N x H x C x W -> N x H x W x C
-        p_semantic = p_semantic.transpose(1, 2).transpose(2, 3)
         semantic_loss = self.focal_loss(p_semantic, gt_semantic)
 
         return ((self.keypoint_weight * keypoint_loss +
