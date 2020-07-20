@@ -147,13 +147,15 @@ class MultiObjectADDLoss:
         self.sym_list = sym_list
 
     def __call__(self, points, p_keypoints, gt_keypoints, gt_label, model_keypoints,
-            object_models, objects_in_scene, losses):
+            object_models, objects_in_scene, losses, cluster='mean', **kwargs):
         """
         p_keypoints: N x K x 3 x H x W
         gt_keypoints: N x K x 3 x H x W
         model_keypoints: M x K x 3
         object_models: M x P x 3
         objects_in_scene: N x M
+        cluster: clustering algorithm type, options are 'mean' (default) and 'mean_shift_gaussian'.
+                 If 'mean_shift_gaussian' optionally provide 'kernel_bandwidth' as a 1x3 list.
         returns dictionary of losses by object
         """
         gt_keypoints = points[:, None] + gt_keypoints
@@ -168,8 +170,19 @@ class MultiObjectADDLoss:
                 object_keypoints = p_keypoints[i, :, :, object_mask]
                 gt_object_keypoints = gt_keypoints[i, :, :, object_mask]
                 keypoints = model_keypoints[object_index]
-                gt_object_keypoints = keypoint_helper.vote(gt_object_keypoints[None])
-                object_keypoints = keypoint_helper.vote(object_keypoints[None])
+                if cluster=='mean':
+                    gt_object_keypoints = keypoint_helper.vote(gt_object_keypoints[None])
+                    object_keypoints = keypoint_helper.vote(object_keypoints[None])
+                elif cluster=='mean_shift_gaussian':
+                    kernel_bandwidth = [0.1, 0.1, 0.1]
+                    if 'kernel_bandwidth' in kwargs:
+                        kernel_bandwidth = kwargs['kernel_bandwidth']
+                    gt_object_keypoints = keypoint_helper.mean_shift_gaussian(\
+                        gt_object_keypoints[None], kernel_bandwidth)
+                    object_keypoints = keypoint_helper.mean_shift_gaussian(\
+                        object_keypoints, kernel_bandwidth)
+                else:
+                    raise Exception('Keypoint cluster type not recognized.')
 
                 gt_T = keypoint_helper.solve_transform(gt_object_keypoints,
                         keypoints)[0]
