@@ -8,8 +8,8 @@ from . import mean_shift as ms
 
 def vote(keypoints):
     """
-    keypoints: N x K x 3 x P
-    return: N x K x 3 aggregated keypoints
+    keypoints: K x 3 x P
+    return: K x 3 aggregated keypoints
     """
     return keypoints.mean(dim=3) # For now, just average over the points.
 
@@ -43,7 +43,7 @@ def solve_transform(keypoints, gt_keypoints):
 
 def mean_shift_gaussian(keypoints, kernel_bandwidth=[0.1, 0.1, 0.1]):
     """
-    keypoints: N x K x 3
+    keypoints: K x 3 x P
     return: K x 3 averaged keypoints
     """
     if type(keypoints) != np.ndarray:
@@ -53,14 +53,15 @@ def mean_shift_gaussian(keypoints, kernel_bandwidth=[0.1, 0.1, 0.1]):
 
     kp_ms = []
 
-    for k in range(keypoints.shape[1]): # do for K keypoints
-        kp = keypoints[:,k,:]
+    for k in range(keypoints.shape[0]): # do for K keypoints
+        kp = keypoints[k,:,:]
+        kp = kp.T
         result = mean_shifter.cluster(kp, kernel_bandwidth)
         clusters, counts = np.unique(result.cluster_ids, return_counts=True)
         kp_mean = np.mean( result.shifted_points[ \
             result.cluster_ids == clusters[ np.argmax(counts) ] ], axis=0)
         kp_ms.append(kp_mean)
     
-    return np.stack(kp_ms)
+    return torch.tensor(np.expand_dims(np.stack(kp_ms), axis=0))
 
     

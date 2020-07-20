@@ -64,26 +64,28 @@ class MeanShiftGaussianTest(unittest.TestCase):
                        [0.0, -0.1, 0.0],
                        [0.0, 0.1,  0.0],
                        [0.5, 0.3, 0.5],
-                       [-0.5,- 0.3, -0.5]])
-        keypoints = np.stack([kp, kp], axis=1)
+                       [-0.5,- 0.3, -0.5]]).T
+        keypoints = np.stack([kp, kp], axis=0)
         kernel = [0.1, 0.1, 0.1]
         result = kh.mean_shift_gaussian(keypoints, kernel)
+        result = result.numpy()
         np.testing.assert_allclose(result, \
-            np.array([ [ 0.0, 0.0, 0.0 ],
-                       [ 0.0, 0.0, 0.0 ]]), 1e-6, 1e-10)
+            np.expand_dims(np.array([ [ 0.0, 0.0, 0.0 ],
+                       [ 0.0, 0.0, 0.0 ]]), axis = 0 ), 1e-6, 1e-10)
 
     def test_two_clusters(self):
         kp = np.array([[0.0, 0.0, 0.0],
                        [-0.1, 0.0, -0.1],
                        [0.1, 0.0,  0.1],
                        [0.1, 1.01, 0.0],
-                       [-0.1, 0.99,  0.0]])
-        keypoints = np.stack([kp, kp], axis=1)
+                       [-0.1, 0.99,  0.0]]).T
+        keypoints = np.stack([kp, kp], axis=0)
         kernel = [0.1, 0.1, 0.1]
         result = kh.mean_shift_gaussian(keypoints, kernel)
+        result = result.numpy()
         np.testing.assert_allclose(result, \
-            np.array([ [ 0.0, 0.0, 0.0 ],
-                       [ 0.0, 0.0, 0.0 ]]), 1e-6, 1e-10)
+            np.expand_dims(np.array([ [ 0.0, 0.0, 0.0 ],
+                       [ 0.0, 0.0, 0.0 ]]), axis = 0 ), 1e-6, 1e-10)
 
 
 if __name__ == "__main__":
