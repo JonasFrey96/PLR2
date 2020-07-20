@@ -11,7 +11,7 @@ import numpy.ma as ma
 import copy
 import scipy.io as scio
 import torch.utils.data as data
-from PIL import Image
+from PIL import Image, ImageOps
 import logging
 import os
 import pickle
@@ -49,6 +49,7 @@ class ImageExtractor:
         self._pcd_to_cad = pcd_to_cad
         self.cam = self.get_camera(desig)
         self.keypoints = keypoints
+        self._extract_poses()
 
         if obj_idx is not None:
             # when less then this number of points are visble in the scene the frame is thrown away, not used in the overall image mask calculation
@@ -67,18 +68,23 @@ class ImageExtractor:
             self.img = img
             self.pcd = self.pointcloud_layered()
 
+    def _extract_poses(self):
+        N = self.meta['cls_indexes'].size
+        self.R = np.zeros((N, 3, 3))
+        self.t = np.zeros((N, 1, 3))
+        for i in self.object_ids:
+            obj_idx_in_list = int(np.argwhere(self.object_ids == i))
+            self.R[obj_idx_in_list] = self.meta['poses'][:, :, obj_idx_in_list][:, 0:3]
+            self.t[obj_idx_in_list, 0, :] = np.array([self.meta['poses'][:, :, obj_idx_in_list][:, 3:4].flatten()])
+
     def _crop_image(self, img):
         # cropping the image
         return np.transpose(np.array(img)[:, :, :3], (2, 0, 1))[
             :, self.rmin:self.rmax, self.cmin:self.cmax]
 
-    def _compute_pose(self, obj_idx):
-        obj = self.meta['cls_indexes'].flatten().astype(np.int32)
-
-        obj_idx_in_list = int(np.argwhere(obj == obj_idx))
-        R = self.meta['poses'][:, :, obj_idx_in_list][:, 0:3]
-        t = np.array([self.meta['poses'][:, :, obj_idx_in_list][:, 3:4].flatten()])
-        return R, t
+    def _get_pose(self, object_id):
+        index_in_list = int(np.argwhere(self.object_ids == object_id))
+        return self.R[index_in_list], self.t[index_in_list]
 
     def _compute_mask(self):
         mask_depth = ma.getmaskarray(ma.masked_not_equal(self.depth, 0))
@@ -139,18 +145,12 @@ class ImageExtractor:
         """
         make this here simpler for cameras
         """
-        if desig[:8] != 'data_syn' and int(desig[5:9]) >= 60:
-            cx_2 = 323.7872
-            cy_2 = 279.6921
-            fx_2 = 1077.836
-            fy_2 = 1078.189
-            return np.array([cx_2, cy_2, fx_2, fy_2])
-        else:
-            cx_1 = 312.9869
-            cy_1 = 241.3109
-            fx_1 = 1066.778
-            fy_1 = 1067.487
-            return np.array([cx_1, cy_1, fx_1, fy_1])
+        intrinsics = self.meta['intrinsic_matrix']
+        cx = intrinsics[0, 2]
+        cy = intrinsics[1, 2]
+        fx = intrinsics[0, 0]
+        fy = intrinsics[1, 1]
+        return np.array([cx, cy, fx, fy])
 
     def image_masked(self):
         mask_back = ma.getmaskarray(ma.masked_equal(self.label, 0))
@@ -188,7 +188,7 @@ class ImageExtractor:
 
         for obj in self.object_ids:
             mask_obj = np.dstack([(self.label==obj)] * 3)
-            R, t = self._compute_pose(obj)
+            R, t = self._get_pose(obj)
             kp = self.keypoints[obj]
             kp = (R @ kp[:, :, None])[:, :, 0] + t
             for i in range(0, num_keypoints):
@@ -208,9 +208,31 @@ class ImageExtractor:
         out = np.zeros((H, W, 3), dtype=np.float32)
         for object_id in self.object_ids:
             object_mask = self.label == object_id
-            _, t = self._compute_pose(object_id)
+            _, t = self._get_pose(object_id)
             out[object_mask, :] = t[0, :] - self.pcd[object_mask, :]
         return out
+
+LEFT_RIGHT_FLIP = np.array([[-1., 0., 0.],
+    [0., 1., 0.],
+    [0., 0., 1.]], dtype=np.float32)
+
+def flip_meta(meta, width):
+    poses = meta['poses']
+    for i in range(poses.shape[2]):
+        t = poses[:, 3:4, i]
+        R = poses[:, :3, i]
+        poses[:, :3, i] = LEFT_RIGHT_FLIP @ R
+        poses[:, 3:4, i] = LEFT_RIGHT_FLIP @ t
+    meta['poses'] = poses
+
+    center_x = width / 2.0
+    cx = meta['intrinsic_matrix'][0, 2]
+
+    diff = (center_x - cx)
+    cx = center_x + diff
+    meta['intrinsic_matrix'][0, 2] = cx
+
+    return meta
 
 class YCB(Backend):
     def __init__(self, cfg_d, cfg_env):
@@ -223,9 +245,6 @@ class YCB(Backend):
         self._batch_list = self.get_batch_list()
 
         self._length = len(self._batch_list)
-
-        self._trancolor = transforms.ColorJitter(0.2, 0.2, 0.2, 0.05)
-        self._front_num = 2
 
     @property
     def object_models(self):
@@ -243,10 +262,10 @@ class YCB(Backend):
         try:
             img = Image.open(
                 '{0}/{1}-color.png'.format(self._ycb_path, desig))
-            depth = np.array(Image.open(
-                '{0}/{1}-depth.png'.format(self._ycb_path, desig)))
-            label = np.array(Image.open(
-                '{0}/{1}-label.png'.format(self._ycb_path, desig))).astype(np.int32)
+            depth = Image.open(
+                '{0}/{1}-depth.png'.format(self._ycb_path, desig))
+            label = Image.open(
+                '{0}/{1}-label.png'.format(self._ycb_path, desig))
             meta = scio.loadmat(
                 '{0}/{1}-meta.mat'.format(self._ycb_path, desig))
 
@@ -255,15 +274,20 @@ class YCB(Backend):
                 'cant find files for {0}/{1}'.format(self._ycb_path, desig))
             return False
 
+        p_flip = self._dataset_config.get('p_flip', 0.0)
+        if np.random.uniform(0, 1) < p_flip:
+            img = ImageOps.mirror(img)
+            depth = ImageOps.mirror(depth)
+            label = ImageOps.mirror(label)
+            meta = flip_meta(meta, img.size[0])
+
+        depth = np.array(depth)
+        label = np.array(label, dtype=np.int32)
+
         if self._dataset_config['output_cfg']['visu']['return_img']:
             img_copy = np.array(img.convert("RGB"))
 
-        object_ids = np.unique(label)[1:]
-
-        # take the noise color image
-        if self._dataset_config['noise_cfg']['status']:
-            img = self._trancolor(img)
-
+        object_ids = meta['cls_indexes'].flatten()
 
         extractor = ImageExtractor(desig, None, img, depth, label, meta, object_ids,
                 self._num_pt, self._pcd_cad_dict, self._keypoints)
@@ -273,14 +297,6 @@ class YCB(Backend):
 
         keypoint_vectors = extractor.keypoint_vectors()
         center_vectors = extractor.center_vectors()
-
-        # if self._dataset_config['noise_cfg']['status'] and add_front:
-        #     img_masked = img_masked * mask_front[rmin:rmax, cmin:cmax] + \
-        #         front[:, rmin:rmax, cmin:cmax] * \
-        #         ~(mask_front[rmin:rmax, cmin:cmax])
-
-        # if desig[:8] == 'data_syn':
-        #     img_masked = img_masked + np.random.normal(loc=0.0, scale=7.0, size=img_masked.shape)
 
         cloud = cloud.transpose([2, 0, 1]) # H x W x C -> C x H x W
         img = (np.array(img).astype(np.float32) / 127.5 - 1.0).transpose([2, 0, 1])

@@ -466,8 +466,7 @@ if __name__ == "__main__":
             default_root_dir=model_path,
             checkpoint_callback=checkpoint_callback,
             early_stop_callback=early_stop_callback,
-            terminate_on_nan=True,
-            distributed_backend='ddp',
+            distributed_backend='ddp' if args.gpus > 1 else None,
             fast_dev_run=args.dev)
 
     trainer.fit(model)
