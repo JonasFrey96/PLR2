@@ -143,11 +143,8 @@ class KeypointLoss(_Loss):
                 semantic_loss.detach()))
 
 class MultiObjectADDLoss:
-    def __init__(self, sym_list):
-        self.sym_list = sym_list
-
     def __call__(self, points, p_keypoints, gt_keypoints, gt_label, model_keypoints,
-            object_models, objects_in_scene, losses):
+            object_models, objects_in_scene, add_losses, adds_losses):
         """
         p_keypoints: N x K x 3 x H x W
         gt_keypoints: N x K x 3 x H x W
@@ -160,9 +157,10 @@ class MultiObjectADDLoss:
         p_keypoints = points[:, None] + p_keypoints
         N = p_keypoints.shape[0]
         for i in range(N):
-            objects = torch.nonzero(objects_in_scene[i])[0]
-            for object_index in objects:
-                object_id = (object_index + 1).item()
+            indices = torch.nonzero(objects_in_scene[i]).flatten()
+            for object_index in indices:
+                object_index = object_index.item()
+                object_id = object_index + 1
                 object_mask = gt_label[i] == object_id
 
                 object_keypoints = p_keypoints[i, :, :, object_mask]
@@ -175,21 +173,26 @@ class MultiObjectADDLoss:
                         keypoints)[0]
                 T_hat = keypoint_helper.solve_transform(object_keypoints,
                         keypoints)[0]
-                if object_index in self.sym_list:
-                    add = self._compute_add_symmetric(gt_T, T_hat, object_models[object_index])
-                else:
-                    add = self._compute_add(gt_T, T_hat, object_models[object_index])
-                if object_id not in losses:
-                    losses[object_id] = []
-                losses[object_id].append(add.item())
-        return losses
 
+                add = self._compute_add(gt_T, T_hat, object_models[object_index])
+                add_s = self._compute_add_symmetric(gt_T, T_hat, object_models[object_index])
+
+                if object_id not in add_losses:
+                    add_losses[object_id] = []
+                    adds_losses[object_id] = []
+                add_losses[object_id].append(add.item())
+                adds_losses[object_id].append(add_s.item())
+
+        return add_losses, adds_losses
 
     def _compute_add(self, gt_T, T_hat, model_points):
-        ones = torch.ones(model_points.shape[0], 1, dtype=model_points.dtype).to(gt_T.device)
-        points = torch.cat([model_points, ones], dim=1)[:, :, None]
-        ground_truth = (gt_T @ points)[:, :3, 0]
-        predicted = (T_hat @ points)[:, :3, 0]
+        R_hat = T_hat[:3, :3]
+        t_hat = T_hat[:3, 3, None]
+        model_points = model_points[:, :, None]
+        predicted = ((R_hat @ model_points) + t_hat)[:, :, 0]
+        R_gt = gt_T[:3, :3]
+        t_gt = gt_T[:3, 3, None]
+        ground_truth = ((R_gt @ model_points) + t_gt)[:, :, 0]
         return (ground_truth - predicted).norm(dim=1).mean()
 
     def _compute_add_symmetric(self, gt_T, T_hat, model_points):

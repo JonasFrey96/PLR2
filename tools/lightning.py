@@ -340,7 +340,9 @@ class TrackNet6D(LightningModule):
         optimizer = torch.optim.Adam(
             self.estimator.parameters(), lr=self.exp['lr'])
         scheduler = {
-            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **self.exp['lr_cfg']['on_plateau_cfg']),
+            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                verbose=True,
+                **self.exp['lr_cfg']['on_plateau_cfg']),
             'monitor': 'avg_val_loss',  # Default: val_loss
             'interval': self.exp['lr_cfg']['interval'],
             'frequency': self.exp['lr_cfg']['frequency']
