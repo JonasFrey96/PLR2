@@ -1,11 +1,9 @@
 import torch
+import numpy as np
 
 def vote(keypoints):
-    """
-    keypoints: N x K x 3 x P
-    return: N x K x 3 aggregated keypoints
-    """
-    return keypoints.mean(dim=3) # For now, just average over the points.
+    """keypoints: N x K x 3 x P """
+    return keypoints.mean(dim=3)
 
 def solve_transform(keypoints, gt_keypoints):
     """

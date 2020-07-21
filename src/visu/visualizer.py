@@ -2,41 +2,15 @@ import numpy as np
 import sys
 import os
 from PIL import Image
-from visu.helper_functions import save_image
+from visu.helper_functions import *
+from visu import helper_functions
 from scipy.spatial.transform import Rotation as R
 from helper import re_quat
 import copy
 import torch
 import numpy as np
 import k3d
-from matplotlib import cm
 
-KEYPOINT_COLORS = np.array([
-    [  0,   0, 127],
-    [  0,   0, 255],
-    [  0, 128, 255],
-    [ 21, 255, 225],
-    [124, 255, 121],
-    [228, 255,  18],
-    [255, 148,   0],
-    [255,  29,   0]], dtype=np.uint8)
-CENTER_COLOR = np.array([255, 0, 0], dtype=np.uint8)
-
-jet = cm.get_cmap('jet')
-SEG_COLORS = (np.stack([jet(v) for v in np.linspace(0, 1, 22)]) * 255).astype(np.uint8)
-
-def project_points(points, cam_cx, cam_cy, cam_fx, cam_fy):
-    """
-    points: P x 3
-    returns: P x 2 in image cordinates
-    """
-    out = np.zeros((points.shape[0], 2), dtype=np.int32)
-    p_x = points[:, 0]
-    p_y = points[:, 1]
-    p_z = points[:, 2]
-    out[:, 0] = (p_x / p_z * cam_fx + cam_cx).astype(np.int32)
-    out[:, 1] = (p_y / p_z * cam_fy + cam_cy).astype(np.int32)
-    return out
 
 class Visualizer():
     def __init__(self, p_visu, writer=None):
@@ -59,18 +33,11 @@ class Visualizer():
         object_ids = np.unique(label)
         for object_index in object_ids[1:]:
             local_image = img.copy()
-            mask = label == object_index
-            object_keypoints = keypoints[mask, :].reshape(-1, 3)
-            projected = project_points(object_keypoints, cam_cx, cam_cy, cam_fx, cam_fy)
-            projected = projected.reshape(-1, K, 2)
-            for p in range(projected.shape[0]):
-                for i in range(K):
-                    u, v = projected[p, i, :]
-                    color = KEYPOINT_COLORS[i]
-                    try:
-                        local_image[v - w:v + w + 1, u - w:u + w + 1, :] = color
-                    except IndexError:
-                        pass
+            local_image = helper_functions.visualize_votes(local_image, keypoints,
+                    label,
+                    object_index,
+                    cam_cx, cam_cy, cam_fx, cam_fy,
+                    w=w)
             image_tag = tag + f"_obj{object_index}"
             if store:
                 save_image(local_image, tag=f"epoch_{epoch}_{image_tag}",

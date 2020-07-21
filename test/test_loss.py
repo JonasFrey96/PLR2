@@ -38,7 +38,7 @@ class ADDLossTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.keypoint_count = 8
-        cls.loss = MultiObjectADDLoss([])
+        cls.loss = MultiObjectADDLoss()
 
     def test_zero(self):
         point_count = 100
@@ -59,8 +59,8 @@ class ADDLossTest(unittest.TestCase):
         cube_points = sample_cube_points()
         objects_in_scene = torch.tensor(np.ones((1, 1), dtype=np.int64))
         losses = {}
-        value = self.loss(points, predictions, predictions, label, cube,
-                cube_points[None], objects_in_scene, losses)
+        value, _ = self.loss(points, predictions, predictions, label, cube,
+                cube_points[None], objects_in_scene, losses, {})
         self.assertEqual(value[1][0], 0.0)
 
     def test_translation(self):
@@ -85,9 +85,9 @@ class ADDLossTest(unittest.TestCase):
         objects_in_scene = torch.tensor(np.ones((1, 1), dtype=np.int64))
         losses = {}
         gt_keypoints = predictions + translation
-        value = self.loss(points, predictions, gt_keypoints, label, cube,
-                cube_points[None], objects_in_scene, losses)
-        self.assertAlmostEqual(value[1][0], np.linalg.norm(diff, 2))
+        add, add_s = self.loss(points, predictions, gt_keypoints, label, cube,
+                cube_points[None], objects_in_scene, losses, {})
+        self.assertAlmostEqual(add[1][0], np.linalg.norm(diff, 2))
 
 
 class FocalLossTest(unittest.TestCase):

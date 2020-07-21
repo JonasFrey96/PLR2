@@ -74,9 +74,7 @@ class ADDLoss(_Loss):
         self.sym_list = sym_list
 
     def forward(self, pred_r, pred_t, pred_c, target, model_points, idx, points, w, refine):
-
         return loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, w, refine, self.num_pt_mesh, self.sym_list)
-
 
 class FocalLoss(_Loss):
     def __init__(self, gamma=2.0, alpha=0.25, size_average=True):
@@ -127,11 +125,10 @@ class KeypointLoss(_Loss):
         N, _, H, W = p_keypoints.shape
         loss_mask = loss_mask[:, None, :, :]
         kp_mask = loss_mask.expand(-1, p_keypoints.shape[1], -1, -1)
-        NHW = float(N * H * W)
-        keypoint_loss = torch.pow(p_keypoints[kp_mask] - gt_keypoints[kp_mask], 2).sum() / NHW
+        keypoint_loss = torch.pow(p_keypoints[kp_mask] - gt_keypoints[kp_mask], 2).sum() / N
 
         c_mask = loss_mask.expand(-1, p_centers.shape[1], -1, -1)
-        center_loss = torch.pow(p_centers[c_mask] - gt_centers[c_mask], 2).sum() / NHW
+        center_loss = torch.pow(p_centers[c_mask] - gt_centers[c_mask], 2).sum() / N
 
         semantic_loss = self.focal_loss(p_semantic, gt_semantic)
 

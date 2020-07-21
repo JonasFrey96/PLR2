@@ -62,14 +62,7 @@ class TrackNet6D(LightningModule):
             self.load_my_state_dict(state_dict)
 
         self.criterion = KeypointLoss(**exp['loss'])
-        self.add_loss = MultiObjectADDLoss(exp['d_train']['obj_list_sym'])
-
-        self.refine = False
-        self.w = exp['w_normal']
-
-        self.best_validation = 999
-        self.best_validation_patience = 5
-        self.early_stopping_value = 0.1
+        self.add_loss = MultiObjectADDLoss()
 
         self.visualizer = None
         self._dict_track = {}
@@ -95,13 +88,14 @@ class TrackNet6D(LightningModule):
         self.keypoints = dataset_train.keypoints()
         self.K = self.keypoints.shape[1]
 
-    def load_my_state_dict(self, state):
-        new_state = {}
-        for key, value in state['state_dict'].items():
+    def load_my_state_dict(self, checkpoint_state):
+        state_dict = checkpoint_state['state_dict']
+        state = {}
+        for key, value in state_dict.items():
             if key.index('estimator.') == 0:
                 key = key.replace('estimator.', '')
-            new_state[key] = value
-        self.estimator.load_state_dict(new_state)
+                state[key] = value
+        self.estimator.load_state_dict(state)
 
     def forward(self, img, points):
         return self.estimator(img, points)
@@ -148,6 +142,7 @@ class TrackNet6D(LightningModule):
         object_models = self.object_models.to(self.device)
 
         add_losses = {}
+        adds_losses = {}
         for frame in batch:
 
             if frame[0].dtype == torch.bool:
@@ -164,7 +159,7 @@ class TrackNet6D(LightningModule):
             predicted_keypoints = predicted_keypoints.reshape(N, self.K, 3, H, W)
             gt_keypoints = gt_keypoints.reshape(N, self.K, 3, H, W)
             add_loss = self.add_loss(points, predicted_keypoints, gt_keypoints, label,
-                    model_keypoints, object_models, objects_in_scene, add_losses)
+                    model_keypoints, object_models, objects_in_scene, add_losses, adds_losses)
 
             if 'val_loss' not in self._dict_track:
                 self._dict_track['val_loss'] = []
