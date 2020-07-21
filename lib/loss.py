@@ -125,10 +125,10 @@ class KeypointLoss(_Loss):
         N, _, H, W = p_keypoints.shape
         loss_mask = loss_mask[:, None, :, :]
         kp_mask = loss_mask.expand(-1, p_keypoints.shape[1], -1, -1)
-        keypoint_loss = torch.pow(p_keypoints[kp_mask] - gt_keypoints[kp_mask], 2).sum() / N
+        keypoint_loss = torch.abs(p_keypoints[kp_mask] - gt_keypoints[kp_mask]).sum() / N
 
         c_mask = loss_mask.expand(-1, p_centers.shape[1], -1, -1)
-        center_loss = torch.pow(p_centers[c_mask] - gt_centers[c_mask], 2).sum() / N
+        center_loss = torch.abs(p_centers[c_mask] - gt_centers[c_mask]).sum() / N
 
         semantic_loss = self.focal_loss(p_semantic, gt_semantic)
 
