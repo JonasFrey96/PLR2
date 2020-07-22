@@ -325,7 +325,7 @@ class TrackNet6D(LightningModule):
 
             f2, f3, f4, f5, f6, delta_v, delta_r = self.refiner(data, idx)
             pred_trans_new = get_delta_t_in_euclidean(
-                delta_v, t_src=pred_trans, fx=cam[:, 2], fy=cam[:, 3])
+                delta_v, t_src=pred_trans, fx=cam[:, 2].unsqueeze(1), fy=cam[:, 3].unsqueeze(1), device=self.device)
             # pred_trans += delta_t
             delta_t = pred_trans_new - pred_trans
             dis, pred_points, new_target = self.criterion_refine(

@@ -1,3 +1,10 @@
+if __name__ == "__main__":
+    import os
+    import sys
+    sys.path.insert(0, os.getcwd())
+    sys.path.append(os.path.join(os.getcwd() + '/src'))
+    sys.path.append(os.path.join(os.getcwd() + '/lib'))
+
 from torch.nn.modules.loss import _Loss
 from torch.autograd import Variable
 import torch
@@ -10,9 +17,22 @@ from lib.knn.__init__ import KNearestNeighbor
 
 
 def loss_calculation(pred_r, pred_t, target, model_points, idx, points, num_point_mesh, sym_list):
-    pred_r = pred_r.view(1, 1, -1)
-    pred_t = pred_t.view(1, 1, -1)
-    bs, num_p, _ = pred_r.size()
+    """ADD loss calculation
+
+    Args:
+        pred_r ([type]): BS * 3
+        pred_t ([type]): BS * 4
+        idx ([type]): BS * 1
+
+        model_points ([type]): BS * num_points * 3 : randomly selected points of the CAD model
+        target ([type]): BS * num_points * 3 : model_points rotated and translated according to the regression goal (not ground truth because of data augmentation)
+
+        sym_list ([list of integers]):
+    Returns:
+        [type]: [description]
+    """
+    bs, nr_tar_points, = target.size()
+
     num_input_points = len(points[0])
 
     pred_r = pred_r / (torch.norm(pred_r, dim=2).view(bs, num_p, 1))
@@ -75,12 +95,36 @@ def loss_calculation(pred_r, pred_t, target, model_points, idx, points, num_poin
     return dis, new_points.detach(), new_target.detach()
 
 
-class Loss_refine(_Loss):
+class Loss_add(nn.Module):
 
-    def __init__(self, num_points_mesh, sym_list):
-        super(Loss_refine, self).__init__(True)
-        self.num_pt_mesh = num_points_mesh
+    def __init__(self, sym_list):
+        super(Loss_add, self).__init__()
         self.sym_list = sym_list
 
     def forward(self, pred_r, pred_t, target, model_points, idx, points):
         return loss_calculation(pred_r, pred_t, target, model_points, idx, points, self.num_pt_mesh, self.sym_list)
+
+
+if __name__ == "__main__":
+    from scipy.spatial.transform import Rotation as R
+    import numpy as np
+    from scipy.stats import special_ortho_group
+    from helper import re_quat
+    from deep_im import RearangeQuat
+
+    print('test loss')
+    bs = 10
+    re_q = RearangeQuat(bs)
+    mat = special_ortho_group.rvs(dim=3, size=bs)
+    quat = R.from_matrix(mat).as_quat()
+
+    q = torch.from_numpy(quat)
+    re_q(q, input_format='xyzw')
+
+    loss_add = Loss_add(sym_list=[1, 2, 3, 10])
+
+    # nr_tar_points = 3000
+
+    # tar = torch.ones((bs, nr_tar_points, 3))
+    # a
+    # (pred_r, pred_t

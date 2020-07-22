@@ -1,4 +1,4 @@
-model_path: "/home/jonfrey/results/runs/motion_branch/debug"
+model_path: "/media/scratch1/jonfrey/models/runs/motion_branch/debug"
 estimator_restore: true
 estimator_load: "/media/scratch1/jonfrey/models/trained_checkpoints/ycb/pose_model_26_0.012863246640872631.pth"
 refiner_restore: false

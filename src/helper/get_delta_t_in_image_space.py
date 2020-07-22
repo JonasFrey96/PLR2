@@ -26,7 +26,7 @@ def get_delta_t_in_image_space(t_tar, t_src, fx, fy):
     return torch.stack([v_x, v_y, v_z], dim=1)
 
 
-def get_delta_t_in_euclidean(v, t_src, fx, fy):
+def get_delta_t_in_euclidean(v, t_src, fx, fy, device):
     """ convert inital object pose and predicted image coordinates to euclidean translation
     only works for positive z values !
 
@@ -40,12 +40,12 @@ def get_delta_t_in_euclidean(v, t_src, fx, fy):
         torch.Tensor: target object position bs * [x,y,z]
     """
     # alternative implementation override t_src for intrinisc runtime capable or pass input tensor into function
-    t_pred_tar = torch.zeros(t_src.shape)
+    t_pred_tar = torch.zeros(t_src.shape, device=device)
     t_pred_tar[:, 2] = torch.true_divide(t_src[:, 2], torch.exp(v[:, 2]))
     t_pred_tar[:, 0] = (torch.true_divide(v[:, 0], fx[:, 0]) +
-                        torch.true_divide(t_src[:, 0], t_src[:, 2])) * t_tar[:, 2]
+                        torch.true_divide(t_src[:, 0], t_src[:, 2])) * t_pred_tar[:, 2]
     t_pred_tar[:, 1] = (torch.true_divide(v[:, 1], fy[:, 0]) +
-                        torch.true_divide(t_src[:, 1], t_src[:, 2])) * t_tar[:, 2]
+                        torch.true_divide(t_src[:, 1], t_src[:, 2])) * t_pred_tar[:, 2]
     return t_pred_tar
 
 
