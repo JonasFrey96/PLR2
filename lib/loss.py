@@ -6,6 +6,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 # from lib.knn.__init__ import KNearestNeighbor
 from lib import keypoint_helper
+from lib.meanshift_pytorch import MeanShiftTorch
 
 def loss_calculation(pred_r, pred_t, pred_c, target, model_points, idx, points, w, refine, num_point_mesh, sym_list):
     bs, num_p, _ = pred_c.size()
@@ -154,33 +155,41 @@ class MultiObjectADDLoss:
         model_keypoints: M x K x 3
         object_models: M x P x 3
         objects_in_scene: N x M
-        cluster: clustering algorithm type, options are 'mean' (default) and 'mean_shift_gaussian'.
-                 If 'mean_shift_gaussian' optionally provide 'kernel_bandwidth' as a 1x3 list.
+        cluster: clustering algorithm type, options are 'mean' (default) and 'mean_shift'.
+                 If 'mean_shift' optionally provide 'bandwidth' as a 1x3 list, amd max_iter as integer.
         returns dictionary of losses by object
         """
         gt_keypoints = points[:, None] + gt_keypoints
         p_keypoints = points[:, None] + p_keypoints
         N = p_keypoints.shape[0]
+        if cluster=='mean_shift':
+            bandwidth = 0.05
+            max_iter = 300
+            if 'bandwidth' in kwargs:
+                bandwidth = kwargs['bandwidth']
+            if 'max_iter' in kwargs:
+                max_iter = kwargs['max_iter']
+            mst = MeanShiftTorch(bandwidth=bandwidth, max_iter=max_iter)
+
         for i in range(N):
             objects = torch.nonzero(objects_in_scene[i])[0]
             for object_index in objects:
                 object_id = (object_index + 1).item()
                 object_mask = gt_label[i] == object_id
-
                 object_keypoints = p_keypoints[i, :, :, object_mask]
                 gt_object_keypoints = gt_keypoints[i, :, :, object_mask]
                 keypoints = model_keypoints[object_index]
                 if cluster=='mean':
                     gt_object_keypoints = keypoint_helper.vote(gt_object_keypoints[None])
                     object_keypoints = keypoint_helper.vote(object_keypoints[None])
-                elif cluster=='mean_shift_gaussian':
-                    kernel_bandwidth = [0.1, 0.1, 0.1]
-                    if 'kernel_bandwidth' in kwargs:
-                        kernel_bandwidth = kwargs['kernel_bandwidth']
-                    gt_object_keypoints = keypoint_helper.mean_shift_gaussian(\
-                        gt_object_keypoints[None], kernel_bandwidth)
-                    object_keypoints = keypoint_helper.mean_shift_gaussian(\
-                        object_keypoints, kernel_bandwidth)
+                elif cluster=='mean_shift':
+                    gt_object_kp_means = []
+                    obj_kp_means = []
+                    for k in range(gt_object_keypoints.shape[0]):
+                        gt_object_kp_means.append(mst.fit(gt_object_keypoints[k,:,:].T)[0])
+                        obj_kp_means.append(mst.fit(object_keypoints[k,:,:].T)[0])
+                    gt_object_keypoints = torch.stack(gt_object_kp_means, dim=0).unsqueeze(dim = 0)
+                    object_keypoints = torch.stack(obj_kp_means, dim=0).unsqueeze(dim = 0)
                 else:
                     raise Exception('Keypoint cluster type not recognized.')
 

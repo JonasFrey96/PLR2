@@ -4,7 +4,6 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(dir_path)
 import torch
 import numpy as np
-from . import mean_shift as ms
 
 def vote(keypoints):
     """
@@ -40,28 +39,5 @@ def solve_transform(keypoints, gt_keypoints):
     T[:, 3, 3] = 1.0
 
     return T
-
-def mean_shift_gaussian(keypoints, kernel_bandwidth=[0.1, 0.1, 0.1]):
-    """
-    keypoints: K x 3 x P
-    return: K x 3 averaged keypoints
-    """
-    if type(keypoints) != np.ndarray:
-        keypoints = keypoints.numpy()
-
-    mean_shifter = ms.MeanShift(kernel='multivariate_gaussian')
-
-    kp_ms = []
-
-    for k in range(keypoints.shape[0]): # do for K keypoints
-        kp = keypoints[k,:,:]
-        kp = kp.T
-        result = mean_shifter.cluster(kp, kernel_bandwidth)
-        clusters, counts = np.unique(result.cluster_ids, return_counts=True)
-        kp_mean = np.mean( result.shifted_points[ \
-            result.cluster_ids == clusters[ np.argmax(counts) ] ], axis=0)
-        kp_ms.append(kp_mean)
-    
-    return torch.tensor(np.expand_dims(np.stack(kp_ms), axis=0))
 
     
