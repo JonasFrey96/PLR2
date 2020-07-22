@@ -5,6 +5,7 @@ import torch
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 import cv2
+from helper import quat_to_rot
 
 
 def get_rot_vec(R):
@@ -106,11 +107,22 @@ class ViewpointManager():
         mat = mat.unsqueeze(0)
         return self.get_closest_image_batch(idx, mat)
 
-    def get_closest_image_batch(self, idx, mat):
+    def get_closest_image_batch(self, i, rot, conv='wxyz'):
         """
         mat: BSx3x3
-        idx: BSx1
+        idx: BSx1 0-num_obj-1
         """
+        # adapt index notation to 1-num_obj
+        idx = copy.copy(i) + 1
+
+        if rot.shape[-1] == 3:
+          # rotation matrix input
+            pass
+        elif rot.shape[-1] == 4:
+            rot = quat_to_rot(rot=rot, conv=conv, device=self.device)
+        else:
+            raise Exception('invalidae shape received for rot', rot.shape)
+
         sr = self.pose_dict[int(idx[0])].shape  # shape reference size sr
         bs = idx.shape[0]
 
@@ -120,25 +132,28 @@ class ViewpointManager():
         for i in range(0, idx.shape[0]):
             n_mat[i] = self.pose_dict[int(idx[i])][:, :3, :3]
 
-        calc = time.time()
-        best_match_idx = angle_batch_torch_full(mat, n_mat)
-        print("Calc time", time.time() - calc)
+        best_match_idx = angle_batch_torch_full(rot, n_mat)
 
         img = []
         depth = []
         target = []
 
+        imgls = torch.empty((idx.shape[0], 480, 640, 3), device=self.device)
+        depls = torch.empty((idx.shape[0], 480, 640), device=self.device)
+        tarls = torch.empty((idx.shape[0], 4, 4), device=self.device)
+
         for j, i in enumerate(idx.tolist()):
             best_match = int(best_match_idx[j])
             obj = self.idx_to_name[i[0]]
 
-            img.append(Image.open(
-                f'{self.store}/{obj}/{best_match}-color.png'))
-            depth.append(Image.open(
-                f'{self.store}/{obj}/{best_match}-depth.png'))
-            target.append(self.pose_dict[i[0]][best_match, :3, :3])
+            imgls[j, :, :, :] = torch.from_numpy(np.array(Image.open(
+                f'{self.store}/{obj}/{best_match}-color.png')).astype(np.float32)).to(self.device).unsqueeze(0)
+            depls[j, :, :] = torch.from_numpy(np.array(Image.open(
+                f'{self.store}/{obj}/{best_match}-depth.png')).astype(np.float32)).to(self.device).unsqueeze(0)
+            tarls[j, :, :] = copy.deepcopy(
+                self.pose_dict[i[0]][best_match, :4, :4])
 
-        return img, depth, target
+        return imgls, depls, tarls
 
 
 if __name__ == "__main__":

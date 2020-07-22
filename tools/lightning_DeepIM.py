@@ -47,6 +47,162 @@ from loaders_v2 import GenericDataset
 from visu import Visualizer
 from helper import re_quat, flatten_dict
 from deep_im import DeepIM, ViewpointManager
+from helper import BoundingBox
+from helper import get_delta_t_in_euclidean, quat_to_rot
+
+# move this to seperate file
+import matplotlib.pyplot as plt
+
+
+def get_bb_from_depth(depth):
+    bb_lsd = []
+    for d in depth:
+        masked_idx = (d != 0).nonzero()
+        min1 = torch.min(masked_idx[:, 0]).type(torch.float32)
+        max1 = torch.max(masked_idx[:, 0]).type(torch.float32)
+        min2 = torch.min(masked_idx[:, 1]).type(torch.float32)
+        max2 = torch.max(masked_idx[:, 1]).type(torch.float32)
+        bb_lsd.append(BoundingBox(p1=torch.stack(
+            [min1, min2]), p2=torch.stack([max1, max2])))
+    return bb_lsd
+
+
+def backproject_point(p, fx, fy, cx, cy):
+    u = int(((p[0] / p[2]) * fx) + cx)
+    v = int(((p[1] / p[2]) * fy) + cy)
+    return u, v
+
+
+def backproject_points(p, fx, fy, cx, cy):
+    """
+    p.shape = (nr_points,xyz)
+    """
+    u = torch.round((torch.true_divide(p[:, 0], p[:, 2]) * fx) + cx)
+    v = torch.round((torch.true_divide(p[:, 1], p[:, 2]) * fy) + cy)
+    return torch.stack([v, u]).T
+
+
+def backproject_points_batch(p, fx, fy, cx, cy):
+    """
+    p.shape = (nr_points,xyz)
+    """
+    bs, dim, _ = p.shape
+    p = p.view(-1, 3)
+
+    u = torch.round(torch.true_divide(p[:, 0], p[:, 2]).view(
+        bs, -1) * fx.view(bs, -1).repeat(1, dim) + cx.view(bs, -1).repeat(1, dim))
+    v = torch.round(torch.true_divide(p[:, 0], p[:, 1]).view(
+        bs, -1) * fy.view(bs, -1).repeat(1, dim) + cy.view(bs, -1).repeat(1, dim))
+
+    return torch.stack([u, v], dim=2)
+
+
+def plt_img(img, name='plt_img.png', folder='/home/jonfrey/Debug'):
+
+    fig = plt.figure()
+    fig.add_subplot(1, 1, 1)
+    plt.imshow(img)
+    plt.axis("off")
+    plt.savefig(folder + '/' + name)
+
+
+def plt_torch(data, name='torch.png', folder='/home/jonfrey/Debug'):
+    img = render = np.transpose(
+        data[:, :, :].cpu().numpy().astype(np.uint8), (2, 1, 0))
+    fig = plt.figure()
+    fig.add_subplot(1, 1, 1)
+    plt.imshow(img)
+    plt.axis("off")
+    plt.savefig(folder + '/' + name)
+
+
+def visu_network_input(data, folder='/home/jonfrey/Debug', max_images=10):
+    num = min(max_images, data.shape[0])
+    fig = plt.figure(figsize=(7, num * 3.5))
+
+    for i in range(num):
+
+        n_render = f'batch{i}_render.png'
+        n_real = f'batch{i}_real.png'
+        real = np.transpose(
+            data[i, :3, :, :].cpu().numpy().astype(np.uint8), (1, 2, 0))
+        render = np.transpose(
+            data[i, 3:, :, :].cpu().numpy().astype(np.uint8), (1, 2, 0))
+
+        # plt_img(real, name=n_real, folder=folder)
+        # plt_img(render, name=n_render, folder=folder)
+
+        fig.add_subplot(num, 2, i * 2 + 1)
+        plt.imshow(real)
+        plt.tight_layout()
+        fig.add_subplot(num, 2, i * 2 + 2)
+        plt.imshow(render)
+        plt.tight_layout()
+    plt.savefig(folder + '/complete_batch.png', dpi=300)
+
+
+def visu_projection(target, images, cam, folder='/home/jonfrey/Debug', max_images=10):
+    num = min(max_images, target.shape[0])
+    fig = plt.figure(figsize=(7, num * 3.5))
+    for i in range(num):
+        masked_idx = backproject_points(
+            target[i], fx=cam[i, 2], fy=cam[i, 3], cx=cam[i, 0], cy=cam[i, 1])
+
+        for j in range(masked_idx.shape[0]):
+            try:
+                images[i, int(masked_idx[j, 0]), int(masked_idx[j, 1]), 0] = 0
+                images[i, int(masked_idx[j, 0]), int(
+                    masked_idx[j, 1]), 1] = 255
+                images[i, int(masked_idx[j, 0]), int(masked_idx[j, 1]), 2] = 0
+            except:
+                pass
+
+        min1 = torch.min(masked_idx[:, 0])
+        max1 = torch.max(masked_idx[:, 0])
+        max2 = torch.max(masked_idx[:, 1])
+        min2 = torch.min(masked_idx[:, 1])
+
+        bb = BoundingBox(p1=torch.stack(
+            [min1, min2]), p2=torch.stack([max1, max2]))
+        bb_img = bb.plot(images[i, :, :, :3].cpu().numpy().astype(np.uint8))
+        fig.add_subplot(num, 2, i * 2 + 1)
+        plt.imshow(bb_img)
+
+        fig.add_subplot(num, 2, i * 2 + 2)
+        real = images[i, :, :, :3].cpu().numpy().astype(np.uint8)
+        plt.imshow(real)
+
+    plt.savefig(folder + '/project_batch.png', dpi=300)
+
+
+def get_bb_real_target(target, cam, gt_trans):
+    bb_ls = []
+    # ret = backproject_points_batch(
+    #     target, fx=cam[:, 2], fy=cam[:, 3], cx=cam[:, 0], cy=cam[:, 1])
+    # min_val, min_ind = torch.min(ret, dim=1, keepdim=True)
+    # max_val, max_ind = torch.max(ret, dim=1, keepdim=True)
+
+    for i in range(target.shape[0]):
+        # could not find a smart alternative to avoide looping
+        masked_idx = backproject_points(
+            target[i], fx=cam[i, 2], fy=cam[i, 3], cx=cam[i, 0], cy=cam[i, 1])
+        min1 = torch.min(masked_idx[:, 0])
+        max1 = torch.max(masked_idx[:, 0])
+        max2 = torch.max(masked_idx[:, 1])
+        min2 = torch.min(masked_idx[:, 1])
+
+        bb = BoundingBox(p1=torch.stack(
+            [min1, min2]), p2=torch.stack([max1, max2]))
+
+        # val_image = img_orig[i, :, :, :].cpu().numpy()
+        # bb.plot(val_image)
+
+        # center_real = backproject_point(
+        # gt_trans[i, :], fx=cam[i, 2], fy=cam[i, 3], cx=cam[i, 0], cy=cam[i, 1])
+        # bb.move(-center_real[1], -center_real[0])
+        bb_ls.append(bb)
+
+    return bb_ls
 
 
 class TrackNet6D(LightningModule):
@@ -64,6 +220,7 @@ class TrackNet6D(LightningModule):
         self.env, self.exp = env, exp
 
         restore_deepim_refiner = '/media/scratch1/jonfrey/models/pretrained_flownet/FlowNetModels/pytorch/flownets_from_caffe.pth.tar'
+
         self.refiner = DeepIM.from_weights(
             21, restore_deepim_refiner)
 
@@ -90,19 +247,95 @@ class TrackNet6D(LightningModule):
 
         self.init_train_vali_split = False
 
-    def forward(self, img, idx, gt_rot_wxyz, gt_trans):
-        "img, gt_pose, mask, idx"
-
+    def forward(self, batch):
+        # Hyper parameters that should  be moved to config
+        refine_iterations = 3
+        translation_noise = 0.03
         points, choose, img, target, model_points, idx = batch[0:6]
         depth_img, label_img, img_orig, cam = batch[6:10]
         gt_rot_wxyz, gt_trans, unique_desig = batch[10:13]
 
-        self.vm.get_closest_image_batch()
+        # compute BpundingBox based on label
+        sub = torch.ones(label_img.shape, device=self.device)
+        sub = sub * idx.view((10, 1, 1)).repeat((1, 480, 640))
 
-        pred_r, pred_t, pred_c, emb, ap_x = self.refiner(
-            img, points, choose, idx)
+        # start with an inital guess (here we take the noisy version later from the dataloader or replay buffer implementation)
+        # current estimate of the rotation and translations
+        pred_rot_wxyz, pred_trans = gt_rot_wxyz, torch.normal(
+            mean=gt_trans, std=translation_noise)
+        pred_rot_mat = quat_to_rot(
+            pred_rot_wxyz, conv='wxyz', device=self.device)
+        # current estimate of the object points
+        rot_mat = pred_rot_mat.unsqueeze(1).repeat(
+            (1, model_points.shape[1], 1, 1)).view(-1, 3, 3)
+        pred_points = target
+        # torch.add(
+        # torch.bmm(model_points.view(-1,3), rot_mat), pred_trans)
 
-        return pred_r, pred_t, pred_c, emb, ap_x
+        w = 640
+        h = 480
+        bs = img.shape[0]
+
+        for i in range(0, refine_iterations):
+
+            render_img = torch.empty((bs, 3, h, w), device=self.device)
+            # preper render data
+            img_ren, depth, h_render = self.vm.get_closest_image_batch(
+                i=idx, rot=pred_rot_wxyz, conv='wxyz')
+            bb_lsd = get_bb_from_depth(depth)
+            for j, b in enumerate(bb_lsd):
+                center_ren = backproject_points(
+                    h_render[j, :3, 3].view(1, 3), fx=cam[j, 2], fy=cam[j, 3], cx=cam[j, 0], cy=cam[j, 1])
+                center_ren = center_ren.squeeze()
+                b.move(-center_ren[1], -center_ren[0])
+                b.expand(1.1)
+                b.expand_to_correct_ratio(w, h)
+                b.move(center_ren[1], center_ren[0])
+                crop_ren = b.crop(img_ren[j]).unsqueeze(0)
+                up = torch.nn.UpsamplingBilinear2d(size=(h, w))
+                crop_ren = torch.transpose(crop_ren, 1, 3)
+                crop_ren = torch.transpose(crop_ren, 2, 3)
+                render_img[j] = up(crop_ren)
+
+            # prepare real data
+            real_img = torch.empty((bs, 3, h, w), device=self.device)
+            # update the target to get new bb
+            bb_ls = get_bb_real_target(pred_points, cam, gt_trans)
+            for j, b in enumerate(bb_ls):
+                center_real = backproject_points(
+                    pred_trans[j].view(1, 3), fx=cam[j, 2], fy=cam[j, 3], cx=cam[j, 0], cy=cam[j, 1])
+                center_real = center_real.squeeze()
+                b.move(-center_real[0], -center_real[1])
+                b.expand(1.1)
+                b.expand_to_correct_ratio(w, h)
+                b.move(center_real[0], center_real[1])
+                # b.plot(img_orig[j].cpu().numpy())
+                crop_real = b.crop(img_orig[j]).unsqueeze(0)
+                up = torch.nn.UpsamplingBilinear2d(size=(h, w))
+                crop_real = torch.transpose(crop_real, 1, 3)
+                crop_real = torch.transpose(crop_real, 2, 3)
+                real_img[j] = up(crop_real)
+
+            # stack the two images, might add additional mask as layer or depth info
+            data = torch.cat([real_img, render_img], dim=1)
+
+            visu_network_input(data)
+            visu_projection(pred_points, img_orig, cam,
+                            folder='/home/jonfrey/Debug', max_images=5)
+
+            f2, f3, f4, f5, f6, delta_v, delta_r = self.refiner(data, idx)
+            pred_trans_new = get_delta_t_in_euclidean(
+                delta_v, t_src=pred_trans, fx=cam[:, 2], fy=cam[:, 3])
+            # pred_trans += delta_t
+            delta_t = pred_trans_new - pred_trans
+            dis, pred_points, new_target = self.criterion_refine(
+                delta_r, delta_t, target, model_points, idx, pred_points)
+
+            # update current rotation prediction
+            pred_trans = pred_trans_new
+
+        # return position estimate of object
+        return pred_r, pred_t
 
     def training_step(self, batch, batch_idx):
         """
@@ -116,7 +349,7 @@ class TrackNet6D(LightningModule):
         gt_trans_ls = []
         skip = False
 
-        pred_r, pred_t = self(batch)
+        pred_r, pred_t = self(batch[0])
 
         emb_ls.append(copy.copy(ap_x))  # use the color emb or ap_x
         t_ls.append(copy.copy(pred_t))
@@ -262,7 +495,7 @@ class TrackNet6D(LightningModule):
 
     """
     def test_epoch_end(self, outputs):
-      
+
         avg_dict = {}
         for old_key in list(self._dict_track.keys()):
             avg_dict['avg_' +
@@ -343,7 +576,7 @@ class TrackNet6D(LightningModule):
                                       cam_fx=float(cam[0, 2]),
                                       cam_fy=float(cam[0, 3]),
                                       store=True)
-      
+
       """
 
     def configure_optimizers(self):
@@ -379,7 +612,7 @@ class TrackNet6D(LightningModule):
         # TODO move to cfg
         store = '/media/scratch1/jonfrey/datasets/YCB_Video_Dataset/viewpoints_renderings'
         self.vm = ViewpointManager(
-            store, dataset_train._backend._name_to_idx)
+            store, dataset_train._backend._name_to_idx, device=self.device)
 
         return dataloader_train
 
