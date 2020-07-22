@@ -141,8 +141,6 @@ class TrackNet6D(LightningModule):
         model_keypoints = self.keypoints.to(self.device)
         object_models = self.object_models.to(self.device)
 
-        add_losses = {}
-        adds_losses = {}
         for frame in batch:
 
             if frame[0].dtype == torch.bool:
@@ -158,8 +156,6 @@ class TrackNet6D(LightningModule):
             N, _, H, W = gt_keypoints.shape
             predicted_keypoints = predicted_keypoints.reshape(N, self.K, 3, H, W)
             gt_keypoints = gt_keypoints.reshape(N, self.K, 3, H, W)
-            add_loss = self.add_loss(points, predicted_keypoints, gt_keypoints, label,
-                    model_keypoints, object_models, objects_in_scene, add_losses, adds_losses)
 
             if 'val_loss' not in self._dict_track:
                 self._dict_track['val_loss'] = []
@@ -175,10 +171,7 @@ class TrackNet6D(LightningModule):
             semantic_loss += losses[2]
             total_loss += loss
 
-        add_log = {}
-        for key, values in add_losses.items():
-            add_log['add_obj_{}'.format(key)] = np.mean(values)
-        tensorboard_logs = {'val_loss': total_loss / len(batch), **add_log,
+        tensorboard_logs = {'val_loss': total_loss / len(batch),
                 'keypoint_loss': keypoint_loss.item(),
                 'center_loss': center_loss.item(),
                 'semantic_loss': semantic_loss.item()}
