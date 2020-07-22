@@ -457,6 +457,7 @@ if __name__ == "__main__":
             checkpoint_callback=checkpoint_callback,
             early_stop_callback=early_stop_callback,
             distributed_backend='ddp' if args.gpus > 1 else None,
+            accumulate_grad_batches=exp.get('accumulate_grad', 1),
             fast_dev_run=args.dev)
 
     trainer.fit(model)
