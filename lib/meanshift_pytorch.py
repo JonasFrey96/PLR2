@@ -1,13 +1,35 @@
 #!/usr/bin/env python3
+"""
+Originally from https://github.com/ethnhe/PVN3D
+
+MIT License
+
+Copyright (c) 2020 Yisheng He
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
 import os
 import torch
 import cv2
 import numpy as np
 import pickle as pkl
 import time
-from sklearn.cluster import MeanShift
-# from lib.utils.my_utils import my_utils
-
 
 def gaussian_kernel(distance, bandwidth):
     return (1 / (bandwidth * torch.sqrt(2 * torch.tensor(np.pi)))) \
@@ -83,91 +105,3 @@ class MeanShiftTorch():
         )
         return ctrs, labels
 
-
-def test():
-    while True:
-        a = np.random.rand(1000, 2)
-        ta = torch.from_numpy(a.astype(np.float32)).cuda()
-        ms = MeanShiftTorch(0.05)
-        ctr, _ = ms.fit(ta)
-        a_idx = (a * 480).astype("uint8")
-        show_a = np.zeros((480, 480, 3), dtype="uint8")
-        show_a[a_idx[:, 0], a_idx[:, 1], :] = np.array([255, 255, 255])
-        ctr = (ctr.cpu().numpy() * 480).astype("uint8")
-        show_a = cv2.circle(show_a, (ctr[1], ctr[0]), 3, (0, 0, 255), -1)
-
-        ms_cpu = MeanShift(
-            bandwidth=0.05, n_jobs=8
-        )
-        ms_cpu.fit(a)
-        clus_ctrs = np.array(ms_cpu.cluster_centers_)
-        clus_labels = ms_cpu.labels_
-        ctr = (clus_ctrs[0] * 480).astype("uint8")
-        show_a = cv2.circle(show_a, (ctr[1], ctr[0]), 3, (255, 0, 0), -1)
-        # imshow('show_a', show_a)
-        print(clus_ctrs[0])
-
-
-def test2():
-    sv_ptn = '/data/workspace/3D_Point_Det/config/ycb.onestage.rs14.nofarflatFocalls/train_log/eval_result/051_large_clamp/mask_res_pic/{}sv_info_1.pkl'
-    for i in range(2000):
-        data = pkl.load(open(sv_ptn.format(i), 'rb'))
-        all_p3ds = data['p3ds']
-
-        for cls_id in data['gt_cls_ids'][0]:
-            if cls_id == 0:
-                break
-            p3ds = all_p3ds[np.where(data['labels'] == cls_id)[0], :]
-            show_img = np.zeros((480, 640, 3), dtype="uint8")
-            p2ds = my_utils.project_p3d(p3ds, 1.0)
-            show_img[p2ds[:, 1], p2ds[:, 0], :] = np.array([255, 255, 255])
-            gpu_label = np.zeros((480, 640, 3), dtype="uint8")
-            cpu_label = gpu_label.copy()
-            p3ds_cu = torch.from_numpy(p3ds).cuda()
-            ms_gpu = MeanShiftTorch(0.05)
-
-            start = time.time()
-            ctr, labels = ms_gpu.fit(p3ds_cu)
-            ctr = ctr.cpu().numpy().reshape(1, 3)
-            labels = labels.cpu().numpy()
-            p2ds_gt_lb = p2ds[np.where(labels==1)[0], :]
-            gpu_label[p2ds_gt_lb[:, 1], p2ds_gt_lb[:, 0], :] = np.array(
-                [255, 255, 255]
-            )
-            end = time.time()
-            print("gpu time:\t", end - start)
-            ctr_2d = my_utils.project_p3d(ctr, 1.0)
-            show_img = cv2.circle(
-                show_img, (ctr_2d[0][0], ctr_2d[0][1]), 3, (0, 0, 255), -1
-            )
-
-            ms_cpu = MeanShift(
-                bandwidth=0.05, n_jobs=40
-            )
-            start = time.time()
-            ms_cpu.fit(p3ds)
-            end = time.time()
-            print("sklearn cpu time:\t", end - start)
-            clus_ctrs = np.array(ms_cpu.cluster_centers_)
-            clus_labels = ms_cpu.labels_
-            ctr_2d = my_utils.project_p3d(clus_ctrs[0].reshape(1, 3), 1.0)
-            show_img = cv2.circle(
-                show_img, (ctr_2d[0][0], ctr_2d[0][1]), 3, (255, 0, 0), -1
-            )
-            p2ds_gt_lb = p2ds[np.where(clus_labels==0)[0], :]
-            cpu_label[p2ds_gt_lb[:, 1], p2ds_gt_lb[:, 0], :] = np.array(
-                [255, 255, 255]
-            )
-            ## can replace this with PIL
-            # imshow('show_img', show_img)
-            # imshow('gpu', gpu_label)
-            # imshow('cpu', cpu_label)
-
-
-def main():
-    test2()
-
-
-if __name__ == "__main__":
-    main()
-# vim: ts=4 sw=4 sts=4 expandtab
