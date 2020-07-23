@@ -133,12 +133,17 @@ class PoseNet(nn.Module):
         return out_rx, out_tx, out_cx, emb.detach()
 
 def pointwise_conv(in_features, maps, out_features):
-    return nn.Sequential(
-        nn.Conv2d(in_features, maps, kernel_size=1, padding=0, bias=False),
-        nn.BatchNorm2d(maps),
-        nn.ReLU(),
-        nn.Conv2d(maps, out_features, kernel_size=1, padding=0, bias=True)
-        )
+    layers = []
+    previous = in_features
+    for feature_map in maps:
+        layers.append(nn.BatchNorm2d(previous))
+        layers.append(nn.ReLU(True))
+        layers.append(nn.Conv2d(previous, feature_map, kernel_size=1, padding=0, bias=False))
+        previous = feature_map
+    layers.append(nn.BatchNorm2d(previous))
+    layers.append(nn.ReLU(True))
+    layers.append(nn.Conv2d(previous, out_features, kernel_size=1, padding=0, bias=True))
+    return nn.Sequential(*layers)
 
 class Conv(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=3, padding=1, **kwargs):
@@ -214,9 +219,9 @@ class KeypointNet(nn.Module):
 
         self.keypoints_out = num_keypoints * 3
         self.num_classes = num_classes
-        self.keypoint_head = pointwise_conv(out_features, 64, self.keypoints_out)
-        self.center_head = pointwise_conv(out_features, 64, 3)
-        self.segmentation_head = pointwise_conv(out_features, 64, num_classes)
+        self.keypoint_head = pointwise_conv(out_features, [128, 64], self.keypoints_out)
+        self.center_head = pointwise_conv(out_features, [128, 64], 3)
+        self.segmentation_head = pointwise_conv(out_features, [128, 64], num_classes)
 
     def forward(self, img, points):
         N, C, H, W = img.shape

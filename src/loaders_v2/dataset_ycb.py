@@ -183,25 +183,20 @@ class ImageExtractor:
         return model_points
 
     def keypoint_vectors(self):
-        num_keypoints = self.keypoints[1].shape[0]
-        kv = [self.pcd.copy() for _ in range(8)]
+        H, W, _ = self.pcd.shape
+        K = self.keypoints[1].shape[0]
+        vectors = np.zeros((H, W, K, 3), dtype=np.float32)
 
-        for obj in self.object_ids:
-            mask_obj = np.dstack([(self.label==obj)] * 3)
-            R, t = self._get_pose(obj)
-            kp = self.keypoints[obj]
-            kp = (R @ kp[:, :, None])[:, :, 0] + t
-            for i in range(0, num_keypoints):
-                kp_vec = kp[i, :]
-                kp_x = kp_vec[0] - kv[i][:, :, 0]
-                kp_y = kp_vec[1] - kv[i][:, :, 1]
-                kp_z = kp_vec[2] - kv[i][:, :, 2]
-                keypoint_cloud = np.dstack((kp_x, kp_y, kp_z))
-                kv[i][mask_obj] = keypoint_cloud[mask_obj]
-        mask_back = np.dstack([(self.label==0)]*3)
-        for i in range(0, num_keypoints):
-            kv[i][mask_back] = 0
-        return np.concatenate(kv, axis=2)
+        for object_id in self.object_ids:
+            object_mask = self.label == object_id
+            # mask_obj = np.dstack([(self.label==object_id)] * 3)
+            points = self.pcd[object_mask, :]
+            R, t = self._get_pose(object_id)
+            keypoints = self.keypoints[object_id]
+            keypoints = (R @ keypoints[:, :, None])[:, :, 0] + t
+
+            vectors[object_mask, :, :] = keypoints[None] - points[:, None]
+        return vectors.reshape(H, W, K*3)
 
     def center_vectors(self):
         H, W = self.label.shape
