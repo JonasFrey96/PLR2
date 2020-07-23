@@ -65,6 +65,17 @@ def project_keypoints_onto_image(image, keypoints, cam, w=3):
 
     return image
 
+def project_centers_onto_image(image, centers, cam, w=5):
+    cam_cx, cam_cy, cam_fx, cam_fy = cam
+    projected = project_points(centers, cam_cx, cam_cy, cam_fx, cam_fy)[0]
+    u, v = projected[:]
+    try:
+        image[v - w:v + w + 1, u - w:u + w + 1, :] = CENTER_COLOR
+    except IndexError:
+        pass
+
+    return image
+
 def compute_keypoints(points, p_keypoints, label):
     """
     points: 3 x H x W
@@ -79,6 +90,17 @@ def compute_keypoints(points, p_keypoints, label):
         object_keypoints = object_keypoints.mean(axis=2)
         keypoints.append(object_keypoints)
     return np.stack(keypoints)
+
+def compute_center(points, p_keypoints, label):
+    object_ids = np.sort(np.unique(label)[1:])
+    p_keypoints = points[None] + p_keypoints
+    centers = []
+    for object_id in object_ids:
+        object_mask = label == object_id
+        object_centers = p_keypoints[:, :, object_mask]
+        object_centers = object_centers.mean(axis=2)
+        centers.append(object_centers)
+    return np.stack(centers)
 
 def visualize_votes(image, votes, label, object_id, cam_cx, cam_cy, cam_fx, cam_fy, w=1):
     mask = label == object_id
@@ -95,6 +117,19 @@ def visualize_votes(image, votes, label, object_id, cam_cx, cam_cy, cam_fx, cam_
             except IndexError:
                 pass
     return image
+
+def visualize_center_votes(image, votes, label, object_id, cam_cx, cam_cy, cam_fx, cam_fy, w=1):
+    mask = label == object_id
+    centers = votes[mask, :].reshape(-1, 3)
+    projected = project_points(centers, cam_cx, cam_cy, cam_fx, cam_fy)
+    for i in range(projected.shape[0]):
+        u, v = projected[i, :]
+        try:
+            image[v - w:v + w + 1, u - w:u + w + 1, :] = CENTER_COLOR
+        except IndexError:
+            pass
+    return image
+
 
 def points_to_image(image, projected, color, cam, w=4):
     for i in range(projected.shape[0]):
