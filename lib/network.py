@@ -202,11 +202,10 @@ class KeypointNet(nn.Module):
         self.conv3 = DenseBlock(features3, layers=7, k=growth_rate)
         features4 = features3 + 7 * growth_rate
         self.downsample3 = Downsample(features4)
-        features5 = features4 + 12 * growth_rate
-        self.conv4 = nn.Sequential(DenseBlock(features4, layers=12, k=growth_rate), DenseBlock(features5, layers=12, k=growth_rate))
-        features6 = features5 + 12 * growth_rate
+        features5 = features4 + 5 * growth_rate
+        self.conv4 = DenseBlock(features4, layers=5, k=growth_rate)
 
-        self.upsample1 = Upsample(features6, 128)
+        self.upsample1 = Upsample(features5, 128)
         features = 128 + features4
         self.conv5 = DenseBlock(features, layers=7, k=growth_rate)
         features += 7 * growth_rate
