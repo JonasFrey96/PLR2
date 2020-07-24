@@ -256,7 +256,7 @@ class YCB(Backend):
         """
         try:
             img = Image.open(
-                '{0}/{1}-color.png'.format(self._ycb_path, desig))
+                '{0}/{1}-color.png'.format(self._ycb_path, desig)).convert("RGB")
             depth = Image.open(
                 '{0}/{1}-depth.png'.format(self._ycb_path, desig))
             label = Image.open(
@@ -279,10 +279,7 @@ class YCB(Backend):
         depth = np.array(depth)
         label = np.array(label, dtype=np.int32)
 
-        if self._dataset_config['output_cfg']['visu']['return_img']:
-            img_copy = np.array(img.convert("RGB"))
-
-        object_ids = meta['cls_indexes'].flatten()
+        object_ids = meta['cls_indexes'].flatten().astype(np.int)
 
         extractor = ImageExtractor(desig, None, img, depth, label, meta, object_ids,
                 self._num_pt, self._pcd_cad_dict, self._keypoints)
