@@ -32,8 +32,7 @@ class Visualizer():
         keypoints = points[:, :, None, :] + keypoints.reshape(H, W, K, 3)
         object_ids = np.unique(label)
         for object_index in object_ids[1:]:
-            local_image = img.copy()
-            local_image = helper_functions.visualize_votes(local_image, keypoints,
+            local_image = helper_functions.visualize_votes(img.copy(), keypoints,
                     label,
                     object_index,
                     cam_cx, cam_cy, cam_fx, cam_fy,

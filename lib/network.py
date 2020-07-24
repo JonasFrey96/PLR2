@@ -191,10 +191,10 @@ class Upsample(nn.Sequential):
 class KeypointNet(nn.Module):
     def __init__(self, growth_rate=16, num_keypoints=8, num_classes=22):
         super().__init__()
-        self.features = nn.Conv2d(6, 64, kernel_size=7, padding=3, stride=2)
-        features = 64
-        self.conv1 = DenseBlock(features, layers=4, k=growth_rate)
-        features2 = features + 4 * growth_rate
+        self.features = nn.Conv2d(3, 64, kernel_size=7, padding=3, stride=2)
+        features1 = 67
+        self.conv1 = DenseBlock(features1, layers=4, k=growth_rate)
+        features2 = features1 + 4 * growth_rate
         self.downsample1 = Downsample(features2)
         self.conv2 = DenseBlock(features2, layers=5, k=growth_rate)
         features3 = features2 + 5 * growth_rate
@@ -213,8 +213,9 @@ class KeypointNet(nn.Module):
         features = 128 + features3
         self.conv6 = DenseBlock(features, layers=5, k=growth_rate)
         self.upsample3 = Upsample(features + 5 * growth_rate, 64)
-        self.conv7 = DenseBlock(128, layers=4, k=growth_rate)
-        out_features = 128 + 4 * growth_rate + 6
+        features = features1 + 64
+        self.conv7 = DenseBlock(features, layers=4, k=growth_rate)
+        out_features = features + 4 * growth_rate
 
         self.keypoints_out = num_keypoints * 3
         self.num_classes = num_classes
@@ -224,8 +225,8 @@ class KeypointNet(nn.Module):
 
     def forward(self, img, points):
         N, C, H, W = img.shape
-        inputs = torch.cat([img, points], dim=1)
-        features = self.features(inputs) # 240 x 320
+        features = self.features(img) # 240 x 320
+        features = torch.cat([features, points], dim=1)
         x = self.conv1(features)
         x = self.downsample1(x) # 120 x 160
         x1 = self.conv2(x)
@@ -241,17 +242,9 @@ class KeypointNet(nn.Module):
         x = self.upsample3(x) # 240 x 320
         x = self.conv7(torch.cat([x, features], dim=1))
 
-        inputs_small = F.interpolate(inputs, size=[240, 320], mode='bilinear')
-
-        x = torch.cat([x, inputs_small], dim=1)
-
         keypoints = self.keypoint_head(x)
         centers = self.center_head(x)
         segmentation = self.segmentation_head(x)
-
-        keypoints = F.interpolate(keypoints, size=[480, 640], mode='bilinear')
-        centers = F.interpolate(centers, size=[480, 640], mode='bilinear')
-        segmentation = F.interpolate(segmentation, size=[480, 640], mode='bilinear')
 
         return keypoints, centers, segmentation
 

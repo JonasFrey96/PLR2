@@ -40,8 +40,8 @@ def project_points(points, cam_cx, cam_cy, cam_fx, cam_fy):
     p_x = points[:, 0]
     p_y = points[:, 1]
     p_z = points[:, 2]
-    out[:, 0] = (p_x / p_z * cam_fx + cam_cx).astype(np.int32)
-    out[:, 1] = (p_y / p_z * cam_fy + cam_cy).astype(np.int32)
+    out[:, 0] = (p_x / p_z * cam_fx + cam_cx).round().astype(np.int32)
+    out[:, 1] = (p_y / p_z * cam_fy + cam_cy).round().astype(np.int32)
     return out
 
 def segmentation_image(image):

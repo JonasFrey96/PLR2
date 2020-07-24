@@ -16,10 +16,9 @@ import logging
 import os
 import pickle
 from loaders_v2 import Backend, ConfigLoader
-from helper import get_bbox_480_640
 
-_xmap = np.array([[j for i in range(640)] for j in range(480)])
-_ymap = np.array([[i for i in range(640)] for j in range(480)])
+_xmap = np.array([[j for i in range(320)] for j in range(240)])
+_ymap = np.array([[i for i in range(320)] for j in range(240)])
 
 def _read_keypoint_file(filepath):
     keypoints = []
@@ -38,10 +37,9 @@ def _read_keypoint_file(filepath):
     return np.stack(keypoints)
 
 class ImageExtractor:
-    def __init__(self, desig, obj_idx, img, depth, label, meta, object_ids, num_points,
+    def __init__(self, desig, img, depth, label, meta, object_ids, num_points,
                  pcd_to_cad, keypoints=None):
         self.desig = desig
-        self.obj_idx = obj_idx
         self.depth = depth
         self.label = label
         self.meta = meta
@@ -51,22 +49,13 @@ class ImageExtractor:
         self.keypoints = keypoints
         self._extract_poses()
 
-        if obj_idx is not None:
-            # when less then this number of points are visble in the scene the frame is thrown away, not used in the overall image mask calculation
-            self._num_pt = num_points
-            self._minimum_num_pt = 50
-            self.valid = self._compute_mask()
-            if self.valid:
-                self._compute_choose()
-                self.img = self._crop_image(img)
-        else:
-            self.rmin = 0
-            self.rmax = 480
-            self.cmin = 0
-            self.cmax = 640
-            self._choose = np.full((480, 640), True).flatten()
-            self.img = img
-            self.pcd = self.pointcloud_layered()
+        self.rmin = 0
+        self.rmax = 480
+        self.cmin = 0
+        self.cmax = 640
+        self._choose = np.full((480, 640), True).flatten()
+        self.img = img
+        self.pcd = self.pointcloud_layered()
 
     def _extract_poses(self):
         N = self.meta['cls_indexes'].size
@@ -77,69 +66,17 @@ class ImageExtractor:
             self.R[obj_idx_in_list] = self.meta['poses'][:, :, obj_idx_in_list][:, 0:3]
             self.t[obj_idx_in_list, 0, :] = np.array([self.meta['poses'][:, :, obj_idx_in_list][:, 3:4].flatten()])
 
-    def _crop_image(self, img):
-        # cropping the image
-        return np.transpose(np.array(img)[:, :, :3], (2, 0, 1))[
-            :, self.rmin:self.rmax, self.cmin:self.cmax]
-
     def _get_pose(self, object_id):
         index_in_list = int(np.argwhere(self.object_ids == object_id))
         return self.R[index_in_list], self.t[index_in_list]
 
-    def _compute_mask(self):
-        mask_depth = ma.getmaskarray(ma.masked_not_equal(self.depth, 0))
-        if self.obj_idx is not None:
-            mask_label = ma.getmaskarray(ma.masked_equal(self.label, self.obj_idx))
-            self._mask = mask_label * mask_depth
-        else:
-            self._mask = mask_depth
-
-        if len(self._mask.nonzero()[0]) <= self._minimum_num_pt:
-            return False
-
-        self.rmin, self.rmax, self.cmin, self.cmax = get_bbox_480_640(
-            mask_label)
-
-        return True
-
-    def _compute_choose(self):
-        # check how many pixels/points are within the masked area
-        choose = self._mask[self.rmin:self.rmax, self.cmin:self.cmax].flatten().nonzero()[0]
-        # choose is a flattend array containg all pixles/points that are part of the object
-        if len(choose) > self._num_pt:
-            # randomly sample some points choose since object is to big
-            c_mask = np.zeros(len(choose), dtype=int)
-            c_mask[:self._num_pt] = 1
-            np.random.shuffle(c_mask)
-            choose = choose[c_mask.nonzero()]
-        else:
-            # take some padding around the tiny box
-            choose = np.pad(choose, (0, self._num_pt - len(choose)), 'wrap')
-        self._choose = choose
-
-    def pointcloud(self):
-        depth_masked = (self.depth[self.rmin:self.rmax, self.cmin:self.cmax]
-                        .flatten()[self._choose][:, np.newaxis].astype(np.float32))
-        xmap_masked = (_xmap[self.rmin:self.rmax, self.cmin:self.cmax]
-                       .flatten()[self._choose][:, np.newaxis].astype(np.float32))
-        ymap_masked = (_ymap[self.rmin:self.rmax, self.cmin:self.cmax]
-                       .flatten()[self._choose][:, np.newaxis].astype(np.float32))
-
-        cam_scale = self.meta['factor_depth'][0][0]
-        pt2 = depth_masked / cam_scale
-        pt0 = (ymap_masked - self.cam[0]) * pt2 / self.cam[2]
-        pt1 = (xmap_masked - self.cam[1]) * pt2 / self.cam[3]
-        return np.concatenate((pt0, pt1, pt2), axis=1)
-
     def pointcloud_layered(self):
         cam_scale = self.meta['factor_depth'][0][0]
+        cam_cx, cam_cy, cam_fx, cam_fy = self.cam / 2.0
         pt2 = self.depth / cam_scale
-        pt0 = (_ymap - self.cam[0]) * pt2 / self.cam[2]
-        pt1 = (_xmap - self.cam[1]) * pt2 / self.cam[3]
+        pt0 = (_ymap - cam_cx) * pt2 / cam_fx
+        pt1 = (_xmap - cam_cy) * pt2 / cam_fy
         return np.dstack((pt0, pt1, pt2)).astype(np.float32)
-
-    def choose(self):
-        return np.array([self._choose])
 
     def get_camera(self, desig):
         """
@@ -151,24 +88,6 @@ class ImageExtractor:
         fx = intrinsics[0, 0]
         fy = intrinsics[1, 1]
         return np.array([cx, cy, fx, fy])
-
-    def image_masked(self):
-        mask_back = ma.getmaskarray(ma.masked_equal(self.label, 0))
-        if self.desig[:8] == 'data_syn':
-            # this might lead to problems later because we also use test data as background. But for now at first it is fine
-            seed = random.choice(self._real)
-            back = np.array(self._trancolor(self.img.convert("RGB")))
-            back = np.transpose(back, (2, 0, 1))[
-                :, self.rmin:self.rmax, self.cmin:self.cmax]
-            img_masked = back * \
-                mask_back[self.rmin:self.rmax, self.cmin:self.cmax] + self.img
-        else:
-            # TODO: figure out if img_masked is supposed to be with the background masked out.
-            img_masked = self.img
-        return img_masked
-
-    def mask(self):
-        return self._mask
 
     def model_points(self, refine, points_small, points_large):
         dellist = [j for j in range(0, len(self._pcd_to_cad[self.obj_idx]))]
@@ -276,12 +195,12 @@ class YCB(Backend):
             label = ImageOps.mirror(label)
             meta = flip_meta(meta, img.size[0])
 
-        depth = np.array(depth)
-        label = np.array(label, dtype=np.int32)
+        depth = np.array(depth.resize((320, 240), Image.BILINEAR))
+        label = np.array(label.resize((320, 240), Image.NEAREST), dtype=np.int32)
 
         object_ids = meta['cls_indexes'].flatten().astype(np.int)
 
-        extractor = ImageExtractor(desig, None, img, depth, label, meta, object_ids,
+        extractor = ImageExtractor(desig, img, depth, label, meta, object_ids,
                 self._num_pt, self._pcd_cad_dict, self._keypoints)
 
         cloud = extractor.pcd
@@ -292,13 +211,15 @@ class YCB(Backend):
 
         cloud = cloud.transpose([2, 0, 1]) # H x W x C -> C x H x W
         img = (np.array(img).astype(np.float32) / 127.5 - 1.0).transpose([2, 0, 1])
-        keypoint_vectors = keypoint_vectors.transpose([2, 0, 1])
-        center_vectors = center_vectors.transpose([2, 0, 1])
+        keypoint_vectors = torch.from_numpy(keypoint_vectors.transpose([2, 0, 1]))
+        center_vectors = torch.from_numpy(center_vectors.transpose([2, 0, 1]))
+        label = torch.from_numpy(label)
+
         tup = (torch.from_numpy(cloud.astype(np.float32)),
                torch.from_numpy(img),
-               torch.from_numpy(label.astype(np.int)),
-               torch.from_numpy(keypoint_vectors),
-               torch.from_numpy(center_vectors))
+               label.to(torch.long),
+               keypoint_vectors,
+               center_vectors)
 
         if self._dataset_config['output_cfg']['visu']['status']:
             # append visu information

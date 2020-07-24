@@ -26,6 +26,7 @@ from helper import pad
 from loaders_v2 import ConfigLoader
 
 import torch
+from torch.nn import functional as F
 from pytorch_lightning.core.lightning import LightningModule
 from pytorch_lightning import Trainer, seed_everything
 import pytorch_lightning as pl
@@ -239,7 +240,7 @@ class TrackNet6D(LightningModule):
     def validation_epoch_end(self, outputs):
         avg_dict = {}
         for key, values in self._dict_track.items():
-            avg_dict['avg_' + key] = torch.stack(values, dim=0).mean()
+            avg_dict['avg_' + key] = torch.stack(values, dim=0).mean().detach().cpu()
         self._dict_track = {}
 
         self.counter_images_logged = 0  # reset image log counter
