@@ -17,9 +17,11 @@ from lib.knn.__init__ import KNearestNeighbor
 from helper import quat_to_rot
 from lib.loss_refiner import loss_calculation
 import pytest
+import copy
+from sklearn.neighbors import KNeighborsClassifier
 
 
-def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list):
+def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list, permutation):
     """ADD loss calculation
 
     Args:
@@ -40,37 +42,40 @@ def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list):
     pred_r = pred_r / torch.norm(pred_r, dim=1).view(bs, 1)
     base = quat_to_rot(pred_r, 'wxyz').unsqueeze(1)
     base = base.view(-1, 3, 3).cuda()
-    # model_points = model_points.view(-1, 1, 3)
-
-    # If input is a (b \times n \times m)(b×n×m) tensor, mat2 is a (b \times m \times p)(b×m×p)
 
     pred_t = pred_t.unsqueeze(1)
-
     pred = torch.add(torch.bmm(model_points, base), pred_t)
     tf_model_points = pred.view(target.shape)
+
+    target2 = copy.deepcopy(target)
+    target3 = copy.deepcopy(target)
+
     for i in range(bs):
         # ckeck if add-s or add
         if idx[i, 0].item() in sym_list:
-            # reshuffle the tensor so each prediction is aligned with its closest neigbour in 3D
 
             ref = target[i, :, :].unsqueeze(0).permute(0, 2, 1)
             query = tf_model_points[i, :, :].unsqueeze(0).permute(0, 2, 1)
 
-            single_q = query[:, :, 0].view(1, 3, 1).repeat(1, 1, 3000)
-            dis = torch.norm(single_q - ref, p=2, dim=1)
-            tuple_out = torch.min(dis, dim=1, keepdim=False)
-
             inds = KNearestNeighbor.apply(ref, query, 1).flatten()
+
+            neigh = KNeighborsClassifier(n_neighbors=1)
+            idx_tmp = np.arange(0, num_p)
+            neigh.fit(ref.cpu().numpy()[0, :, :].T, idx_tmp)
+
+            idx_predict = neigh.predict(query.cpu().numpy()[0, :, :].T)
+
             inds = inds - 1
-            # shuffeled_tar = target[i, inds, :]
 
-            target[i, :, :] = target[i, inds, :]
+            target2[i, :, :] = target[i, inds, :]
 
-            # target[i, :, :] = torch.index_select(
-            # ref.squeeze(0), 1, inds.view(-1) - 1).permute(1, 0)
+            inds = torch.from_numpy(idx_predict.astype(np.int64))
+            target3[i, :, :] = target[i, inds, :]
 
     dis = torch.mean(torch.norm((tf_model_points - target), dim=2), dim=1)
-
+    dis2 = torch.mean(torch.norm((tf_model_points - target2), dim=2), dim=1)
+    dis3 = torch.mean(torch.norm((tf_model_points - target3), dim=2), dim=1)
+    print(dis, dis2, dis3)
     return dis
 
 
@@ -80,8 +85,8 @@ class Loss_add(nn.Module):
         super(Loss_add, self).__init__()
         self.sym_list = sym_list
 
-    def forward(self, pred_r, pred_t, target, model_points, idx):
-        return loss_calculation_add(pred_r, pred_t, target, model_points, idx, self.sym_list)
+    def forward(self, pred_r, pred_t, target, model_points, idx, permutation=0):
+        return loss_calculation_add(pred_r, pred_t, target, model_points, idx, self.sym_list, permutation)
 
 
 def test_loss_add():
@@ -134,20 +139,13 @@ if __name__ == "__main__":
                     target_points, model_points, idx_nonsym)
     print(f'dis = {loss} should be {res}')
 
-    target_points
     # random shuffle indexe
     rand_index = torch.randperm(nr_points)
     target_points = model_points[:, rand_index, :]
-    # target_points = model_points
-    # loss = loss_add(pred_r_unit, pred_t_zeros,
-    #                 target_points, model_points, idx_nonsym)
-
-    # print(f'Loss {loss} should be high since not useing knn')
     loss = loss_add(pred_r_unit, pred_t_zeros,
-                    target_points, model_points, idx_sym)
-    print(f'Loss {loss} should be zero since useing knn')
+                    target_points, model_points, idx_nonsym)
+    print(f'Loss {loss} should be high since not useing knn')
 
-    out = loss_calculation(pred_r_unit, pred_t_zeros, target_points, model_points,
-                           idx_sym, points, num_pt_mesh, sym_list)
-    print(out)
-    # tar = torch.ones((bs, nr_tar_points, 3))
+    loss = loss_add(pred_r_unit, pred_t_zeros,
+                    target_points, model_points, idx_sym, rand_index)
+    print(f'Loss {loss} should be zero since useing knn')
