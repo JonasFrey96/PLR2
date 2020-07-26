@@ -60,7 +60,7 @@ def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list):
             dis = torch.norm(single_q - ref, p=2, dim=1)
             tuple_out = torch.min(dis, dim=1, keepdim=False)
 
-            inds = KNearestNeighbor.apply(ref, query, k=1).flatten()
+            inds = KNearestNeighbor.apply(ref, query, 1).flatten()
             inds = inds - 1
             # shuffeled_tar = target[i, inds, :]
 
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     # print(f'Loss {loss} should be high since not useing knn')
     loss = loss_add(pred_r_unit, pred_t_zeros,
                     target_points, model_points, idx_sym)
-    print(f'Loss {loss} should be zero since not useing knn')
+    print(f'Loss {loss} should be zero since useing knn')
 
     out = loss_calculation(pred_r_unit, pred_t_zeros, target_points, model_points,
                            idx_sym, points, num_pt_mesh, sym_list)
