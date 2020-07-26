@@ -49,6 +49,7 @@ def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list, pe
 
     target2 = copy.deepcopy(target)
     target3 = copy.deepcopy(target)
+    target4 = copy.deepcopy(target)
 
     for i in range(bs):
         # ckeck if add-s or add
@@ -57,25 +58,28 @@ def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list, pe
             ref = target[i, :, :].unsqueeze(0).permute(0, 2, 1)
             query = tf_model_points[i, :, :].unsqueeze(0).permute(0, 2, 1)
 
-            inds = KNearestNeighbor.apply(ref, query, 1).flatten()
-
+            # sklearn
             neigh = KNeighborsClassifier(n_neighbors=1)
             idx_tmp = np.arange(0, num_p)
             neigh.fit(ref.cpu().numpy()[0, :, :].T, idx_tmp)
-
             idx_predict = neigh.predict(query.cpu().numpy()[0, :, :].T)
 
-            inds = inds - 1
+            # pytorch knn
+            inds = KNearestNeighbor.apply(ref, query, 1).flatten()
 
-            target2[i, :, :] = target[i, inds, :]
+            target2[i, :, :] = target[i, inds - 1, :]
+
+            target3[i, :, :] = target[i, inds, :]
 
             inds = torch.from_numpy(idx_predict.astype(np.int64))
-            target3[i, :, :] = target[i, inds, :]
+            target4[i, :, :] = target[i, inds, :]
 
     dis = torch.mean(torch.norm((tf_model_points - target), dim=2), dim=1)
     dis2 = torch.mean(torch.norm((tf_model_points - target2), dim=2), dim=1)
     dis3 = torch.mean(torch.norm((tf_model_points - target3), dim=2), dim=1)
-    print(dis, dis2, dis3)
+    dis4 = torch.mean(torch.norm((tf_model_points - target4), dim=2), dim=1)
+    print(
+        f'\n \n loss without shuffeling {dis}; \n shuffeling with knn ind-1 {dis2}; \n shuffeling knn {dis3}; \n shuffeling sklearn knn {dis4}')
     return dis
 
 
