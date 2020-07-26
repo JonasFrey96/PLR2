@@ -49,18 +49,19 @@ from helper import re_quat, flatten_dict
 
 
 class TrackNet6D(LightningModule):
-    def __init__(self, exp, env):
+    def __init__(self, exp_cfg, env_cfg):
         super().__init__()
 
         # logging h-params
-        exp_config_flatten = flatten_dict(copy.deepcopy( exp ))
+        exp_config_flatten = flatten_dict(
+            copy.deepcopy(exp_cfg.get_FullLoader()))
         for k in exp_config_flatten.keys():
             if exp_config_flatten[k] is None:
                 exp_config_flatten[k] = 'is None'
-
         self.hparams = exp_config_flatten
+
         self.test_size = 0.9
-        self.env, self.exp = env, exp
+        self.env, self.exp = env_cfg, exp_cfg
 
         self.estimator = PoseNet(
             num_points=exp['d_train']['num_points'],
@@ -155,6 +156,9 @@ class TrackNet6D(LightningModule):
             total_loss += loss
             total_dis += dis
 
+
+<< << << < HEAD
+
         if not skip:
             out_rx, out_tx = self.motion_network(emb1=emb_ls[0],
                                                  emb2=emb_ls[1],
@@ -171,6 +175,13 @@ class TrackNet6D(LightningModule):
 
         tensorboard_logs = {'train_loss': float(total_loss), 'train_dis': float(total_dis),
                             'train_loss_without_motion': float(loss_without_motion)}
+== == == =
+        # choose correct loss here
+        total_loss = total_loss / l
+        total_dis = total_dis / l
+        tensorboard_logs = {'train_loss': float(
+            total_loss), 'train_dis': float(total_dis)}
+>>>>>> > master
         return {'loss': total_loss, 'dis': total_dis, 'log': tensorboard_logs, 'progress_bar': {'train_dis': total_dis, 'train_loss': total_loss}}
 
     def validation_step(self, batch, batch_idx):
@@ -220,8 +231,13 @@ class TrackNet6D(LightningModule):
             total_loss += loss
             total_dis += dis
 
+<<<<<<< HEAD
         tensorboard_logs = {'val_loss': float(total_loss /
                             len(batch)), 'val_dis': float(total_dis / len(batch) )}
+=======
+        tensorboard_logs = {'val_loss': float( total_loss /
+                            len(batch)), 'val_dis': float(total_dis / len(batch))}
+>>>>>>> master
         return {'val_loss': total_loss / len(batch), 'val_dis': total_dis / len(batch), 'log': tensorboard_logs}
 
     def test_step(self, batch, batch_idx):
@@ -308,12 +324,21 @@ class TrackNet6D(LightningModule):
             self.best_validation_patience_run = 0
         else:
             self.best_validation_patience_run += 1
-            if self.best_validation_patience_run > self.best_validation_patience:
-                print("figure out how to set stop training flag")
+        #     if self.best_validation_patience_run > self.best_validation_patience:
+        #         print("figure out how to set stop training flag")
 
-        if avg_dict['avg_val_dis'] < self.early_stopping_value:
-            print("figure out how to set stop training flag")
+        # if avg_dict['avg_val_dis'] < self.early_stopping_value:
+        #     print("figure out how to set stop training flag")
 
+<<<<<<< HEAD
+=======
+        if avg_dict['avg_val_dis'] < self.exp['decay_margin_start'] and not self.w_decayed:
+          self.w = self.exp['w_normal'] * self.exp['w_normal_rate']
+          self.w_decayed = True
+          print("w_rate decayed") 
+          
+
+>>>>>>> master
         self.counter_images_logged = 0  # reset image log counter
         tensorboard_log = {}
         for k in avg_dict.keys():
@@ -439,21 +464,34 @@ def file_path(string):
         raise NotADirectoryError(string)
 
 
+def read_args():
+    parser = argparse.ArgumentParser()
+<<<<<<< HEAD
+    parser.add_argument('--exp', type=file_path, default='yaml/exp/exp_ws_motion_train.yml',  # required=True,
+=======
+    parser.add_argument('--exp', type=file_path, default='yaml/exp/exp_load_and_fit.yml',  # required=True,
+>>>>>>> master
+                        help='The main experiment yaml file.')
+    parser.add_argument('--env', type=file_path, default='yaml/env/env_natrix_jonas.yml',
+                        help='The environment yaml file.')
+    parser.add_argument('-w', '--workers', default=None)
+    return parser.parse_args()
+
 if __name__ == "__main__":
     # for reproducability
     seed_everything(42)
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--exp', type=file_path, default='yaml/exp/exp_ws_motion_train.yml',  # required=True,
-                        help='The main experiment yaml file.')
-    parser.add_argument('--env', type=file_path, default='yaml/env/env_natrix_jonas.yml',
-                        help='The environment yaml file.')
-    args = parser.parse_args()
+    args = read_args()
     exp_cfg_path = args.exp
     env_cfg_path = args.env
 
     exp = ConfigLoader().from_file(exp_cfg_path).get_FullLoader()
     env = ConfigLoader().from_file(env_cfg_path).get_FullLoader()
+
+    if args.workers is not None:
+        # This is for debugging. Can easily set workers to 0 so data is loaded on the main thread and
+        # the debugger can be loaded.
+        exp['loader']['workers'] = int(args.workers)
 
     """
     Trainer args (gpus, num_nodes, etc…) && Program arguments (data_path, cluster_email, etc…)
@@ -483,12 +521,7 @@ if __name__ == "__main__":
     shutil.copy(exp_cfg_path, f'{model_path}/{exp_cfg_fn}')
     shutil.copy(env_cfg_path, f'{model_path}/{env_cfg_fn}')
 
-    dic = {'exp': exp, 'env': env}
-    model = TrackNet6D(**dic)
-
     # default used by the Trainer
-    # TODO create one early stopping callback
-    # https://github.com/PyTorchLightning/pytorch-lightning/blob/63bd0582e35ad865c1f07f61975456f65de0f41f/pytorch_lightning/callbacks/base.py#L12
     early_stop_callback = EarlyStopping(
         monitor='avg_val_dis_float',
         patience=exp.get('early_stopping_cfg', {}).get('patience', 100),
@@ -507,6 +540,11 @@ if __name__ == "__main__":
         save_last=True, 
         save_top_k=10,
     )
+<<<<<<< HEAD
+=======
+    model = TrackNet6D(exp_cfg = exp, env_cfg = env)
+    
+>>>>>>> master
     if exp.get('checkpoint_restore', False):
       checkpoint = torch.load(exp['checkpoint_path'], map_location=lambda storage, loc: storage)
       model.load_state_dict(checkpoint['state_dict'])
@@ -536,4 +574,10 @@ if __name__ == "__main__":
         os.system( command)
     else:
       print( "Wrong model_mode defined in exp config")
+<<<<<<< HEAD
       raise Exception
+=======
+      raise Exception
+
+
+>>>>>>> master

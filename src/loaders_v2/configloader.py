@@ -77,6 +77,9 @@ class ConfigLoader(object):
             else:
                 return self.env[key]
 
+    def get(self, key, default=None):
+        return self.env.get(key, default)
+
     def __setitem__(self, key, item):
         if isinstance(key, list) or isinstance(key, tuple):
             val = self.env

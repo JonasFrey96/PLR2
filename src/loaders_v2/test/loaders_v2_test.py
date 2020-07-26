@@ -1,40 +1,49 @@
 import os
+import argparse
 import sys
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
-if __name__ == "__main__":
-    os.chdir('/home/jonfrey/PLR')
-    sys.path.append('src')
-    sys.path.append('src/dense_fusion')
-
-from loaders_v2 import Backend, ConfigLoader, GenericDataset
-from visu import Visualizer
 from PIL import Image
 import copy
-from helper import re_quat
-from scipy.spatial.transform import Rotation as R
-if __name__ == "__main__":
 
-    exp_cfg = ConfigLoader().from_file(
-        '/home/jonfrey/PLR/src/loaders_v2/test/dataset_cfgs.yml')
-    env_cfg = ConfigLoader().from_file(
-        '/home/jonfrey/PLR/src/loaders_v2/test/env_ws.yml')
+
+sys.path.append('src')
+from loaders_v2 import Backend, ConfigLoader, GenericDataset
+from visu import Visualizer
+from helper import re_quat
+
+
+def load_flags():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--env', type=str, help='Environment config file. Same as for tools/lightning.py',
+                        default="yaml/env/env_natrix_jonas.yml")
+    parser.add_argument('--dataset', type=str, help='Dataset config file.',
+                        default="src/loaders_v2/test/dataset_cfgs.yml")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    flags = load_flags()
+    dataset_configuration = ConfigLoader().from_file(flags.dataset)
+    environment_configuration = ConfigLoader().from_file(flags.env)
 
     generic = GenericDataset(
-        cfg_d=exp_cfg['d_ycb'],
-        cfg_env=env_cfg)
+        cfg_d=dataset_configuration['d_ycb'],
+        cfg_env=environment_configuration)
 
     for i in range(0, 10):
         frame = generic[i][0]
 
         dl_dict = {}
-        keys = ['points', 'choose', 'img', 'target', 'model_points', 'idx', 
-        'depth_img', 'img_org', 'cam_cal', 'gt_rot_wxyz', 'gt_trans']
+        keys = ['points', 'choose', 'img', 'target', 'model_points', 'idx',
+                'depth_img', 'img_org', 'cam_cal', 'gt_rot_wxyz', 'gt_trans']
 
         for _j, _i in enumerate(keys):
             dl_dict[_i] = frame[_j]
-        p_res = 'src/loaders_v2/test/results'
-        visu = Visualizer(None, p_res)
+        p_res = '~/images/'
+        os.makedirs(p_res, exist_ok=True)
+        visu = Visualizer(p_res)
         img = np.array(dl_dict['img'])
         img = np.transpose(img, (2, 1, 0)).astype(np.uint8)
         Image.fromarray(img).save(f'{p_res}/img_croped.png', "png")
