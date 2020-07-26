@@ -15,7 +15,8 @@ class RearangeQuat(nn.Module):
         self.bs = bs
 
     def forward(self, q, input_format):
-
+        if len(q.shape) == 1:
+            q = q.unsqueeze(0)
         assert q.shape[0] == self.bs
 
         if input_format == 'xyzw':

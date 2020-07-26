@@ -14,14 +14,17 @@ import torch.nn as nn
 import random
 import torch.backends.cudnn as cudnn
 from lib.knn.__init__ import KNearestNeighbor
+from helper import quat_to_rot
+from lib.loss_refiner import loss_calculation
+import pytest
 
 
-def loss_calculation(pred_r, pred_t, target, model_points, idx, points, num_point_mesh, sym_list):
+def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list):
     """ADD loss calculation
 
     Args:
         pred_r ([type]): BS * 3
-        pred_t ([type]): BS * 4
+        pred_t ([type]): BS * 4 'wxyz'
         idx ([type]): BS * 1
 
         model_points ([type]): BS * num_points * 3 : randomly selected points of the CAD model
@@ -31,68 +34,44 @@ def loss_calculation(pred_r, pred_t, target, model_points, idx, points, num_poin
     Returns:
         [type]: [description]
     """
-    bs, nr_tar_points, = target.size()
+    bs, num_p, _ = target.shape
+    num_point_mesh = num_p
 
-    num_input_points = len(points[0])
+    pred_r = pred_r / torch.norm(pred_r, dim=1).view(bs, 1)
+    base = quat_to_rot(pred_r, 'wxyz').unsqueeze(1)
+    base = base.view(-1, 3, 3).cuda()
+    # model_points = model_points.view(-1, 1, 3)
 
-    pred_r = pred_r / (torch.norm(pred_r, dim=2).view(bs, num_p, 1))
+    # If input is a (b \times n \times m)(b×n×m) tensor, mat2 is a (b \times m \times p)(b×m×p)
 
-    base = torch.cat(((1.0 - 2.0 * (pred_r[:, :, 2]**2 + pred_r[:, :, 3]**2)).view(bs, num_p, 1),
-                      (2.0 * pred_r[:, :, 1] * pred_r[:, :, 2] - 2.0 *
-                       pred_r[:, :, 0] * pred_r[:, :, 3]).view(bs, num_p, 1),
-                      (2.0 * pred_r[:, :, 0] * pred_r[:, :, 2] + 2.0 *
-                       pred_r[:, :, 1] * pred_r[:, :, 3]).view(bs, num_p, 1),
-                      (2.0 * pred_r[:, :, 1] * pred_r[:, :, 2] + 2.0 *
-                       pred_r[:, :, 3] * pred_r[:, :, 0]).view(bs, num_p, 1),
-                      (1.0 - 2.0 * (pred_r[:, :, 1]**2 +
-                                    pred_r[:, :, 3]**2)).view(bs, num_p, 1),
-                      (-2.0 * pred_r[:, :, 0] * pred_r[:, :, 1] + 2.0 *
-                       pred_r[:, :, 2] * pred_r[:, :, 3]).view(bs, num_p, 1),
-                      (-2.0 * pred_r[:, :, 0] * pred_r[:, :, 2] + 2.0 *
-                       pred_r[:, :, 1] * pred_r[:, :, 3]).view(bs, num_p, 1),
-                      (2.0 * pred_r[:, :, 0] * pred_r[:, :, 1] + 2.0 *
-                       pred_r[:, :, 2] * pred_r[:, :, 3]).view(bs, num_p, 1),
-                      (1.0 - 2.0 * (pred_r[:, :, 1]**2 + pred_r[:, :, 2]**2)).view(bs, num_p, 1)), dim=2).contiguous().view(bs * num_p, 3, 3)
-
-    ori_base = base
-    base = base.contiguous().transpose(2, 1).contiguous()
-    model_points = model_points.view(bs, 1, num_point_mesh, 3).repeat(
-        1, num_p, 1, 1).view(bs * num_p, num_point_mesh, 3)
-    target = target.view(bs, 1, num_point_mesh, 3).repeat(
-        1, num_p, 1, 1).view(bs * num_p, num_point_mesh, 3)
-    ori_target = target
-    pred_t = pred_t.contiguous().view(bs * num_p, 1, 3)
-    ori_t = pred_t
+    pred_t = pred_t.unsqueeze(1)
 
     pred = torch.add(torch.bmm(model_points, base), pred_t)
+    tf_model_points = pred.view(target.shape)
+    for i in range(bs):
+        # ckeck if add-s or add
+        if idx[i, 0].item() in sym_list:
+            # reshuffle the tensor so each prediction is aligned with its closest neigbour in 3D
 
-    if idx[0].item() in sym_list:
-        target = target[0].transpose(1, 0).contiguous().view(3, -1)
-        pred = pred.permute(2, 0, 1).contiguous().view(3, -1)
-        inds = KNearestNeighbor.apply(
-            target.unsqueeze(0), pred.unsqueeze(0), k=1)
-        target = torch.index_select(target, 1, inds.view(-1) - 1)
-        target = target.view(
-            3, bs * num_p, num_point_mesh).permute(1, 2, 0).contiguous()
-        pred = pred.view(
-            3, bs * num_p, num_point_mesh).permute(1, 2, 0).contiguous()
+            ref = target[i, :, :].unsqueeze(0).permute(0, 2, 1)
+            query = tf_model_points[i, :, :].unsqueeze(0).permute(0, 2, 1)
 
-    dis = torch.mean(torch.norm((pred - target), dim=2), dim=1)
+            single_q = query[:, :, 0].view(1, 3, 1).repeat(1, 1, 3000)
+            dis = torch.norm(single_q - ref, p=2, dim=1)
+            tuple_out = torch.min(dis, dim=1, keepdim=False)
 
-    t = ori_t[0]
-    points = points.view(1, num_input_points, 3)
+            inds = KNearestNeighbor.apply(ref, query, k=1).flatten()
+            inds = inds - 1
+            # shuffeled_tar = target[i, inds, :]
 
-    ori_base = ori_base[0].view(1, 3, 3).contiguous()
-    ori_t = t.repeat(bs * num_input_points,
-                     1).contiguous().view(1, bs * num_input_points, 3)
-    new_points = torch.bmm((points - ori_t), ori_base).contiguous()
+            target[i, :, :] = target[i, inds, :]
 
-    new_target = ori_target[0].view(1, num_point_mesh, 3).contiguous()
-    ori_t = t.repeat(num_point_mesh, 1).contiguous().view(1, num_point_mesh, 3)
-    new_target = torch.bmm((new_target - ori_t), ori_base).contiguous()
+            # target[i, :, :] = torch.index_select(
+            # ref.squeeze(0), 1, inds.view(-1) - 1).permute(1, 0)
 
-    # print('------------> ', dis.item(), idx[0].item())
-    return dis, new_points.detach(), new_target.detach()
+    dis = torch.mean(torch.norm((tf_model_points - target), dim=2), dim=1)
+
+    return dis
 
 
 class Loss_add(nn.Module):
@@ -101,8 +80,12 @@ class Loss_add(nn.Module):
         super(Loss_add, self).__init__()
         self.sym_list = sym_list
 
-    def forward(self, pred_r, pred_t, target, model_points, idx, points):
-        return loss_calculation(pred_r, pred_t, target, model_points, idx, points, self.num_pt_mesh, self.sym_list)
+    def forward(self, pred_r, pred_t, target, model_points, idx):
+        return loss_calculation_add(pred_r, pred_t, target, model_points, idx, self.sym_list)
+
+
+def test_loss_add():
+    return
 
 
 if __name__ == "__main__":
@@ -112,19 +95,59 @@ if __name__ == "__main__":
     from helper import re_quat
     from deep_im import RearangeQuat
 
+    device = 'cuda:0'
     print('test loss')
-    bs = 10
+    bs = 1
+    nr_points = 3000
+
     re_q = RearangeQuat(bs)
     mat = special_ortho_group.rvs(dim=3, size=bs)
     quat = R.from_matrix(mat).as_quat()
-
-    q = torch.from_numpy(quat)
+    q = torch.from_numpy(quat.astype(np.float32)).cuda()
     re_q(q, input_format='xyzw')
+    pred_r = q.unsqueeze(0)
 
-    loss_add = Loss_add(sym_list=[1, 2, 3, 10])
+    pred_t_zeros = torch.zeros((bs, 3), device=device)
+    pred_t_ones = torch.ones((bs, 3), device=device)
 
-    # nr_tar_points = 3000
+    model_points = torch.rand((bs, nr_points, 3), device=device)
+    res = 0.15
+    target_points = model_points + \
+        torch.ones((bs, nr_points, 3), device=device) * \
+        float(np.sqrt(res * res / 3))
+    pred_r_unit = torch.zeros((bs, 4), device=device)
+    pred_r_unit[:, 0] = 1
 
+    # target_points = torch.ones((bs, nr_points, 3), device=device)
+    sym_list = [0]
+    loss_add = Loss_add(sym_list=sym_list)
+
+    idx_sym = torch.zeros((bs, 1), device=device)
+    idx_nonsym = torch.ones((bs, 1), device=device)
+    # loss_add(pred_r, pred_t, target, model_points, idx)
+    # loss_add(pred_r, pred_t, target_points, model_points, idx)
+
+    points = target_points
+    num_pt_mesh = nr_points
+
+    loss = loss_add(pred_r_unit, pred_t_zeros,
+                    target_points, model_points, idx_nonsym)
+    print(f'dis = {loss} should be {res}')
+
+    target_points
+    # random shuffle indexe
+    rand_index = torch.randperm(nr_points)
+    target_points = model_points[:, rand_index, :]
+    # target_points = model_points
+    # loss = loss_add(pred_r_unit, pred_t_zeros,
+    #                 target_points, model_points, idx_nonsym)
+
+    # print(f'Loss {loss} should be high since not useing knn')
+    loss = loss_add(pred_r_unit, pred_t_zeros,
+                    target_points, model_points, idx_sym)
+    print(f'Loss {loss} should be zero since not useing knn')
+
+    out = loss_calculation(pred_r_unit, pred_t_zeros, target_points, model_points,
+                           idx_sym, points, num_pt_mesh, sym_list)
+    print(out)
     # tar = torch.ones((bs, nr_tar_points, 3))
-    # a
-    # (pred_r, pred_t

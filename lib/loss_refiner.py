@@ -50,7 +50,7 @@ def loss_calculation(pred_r, pred_t, target, model_points, idx, points, num_poin
         target = target[0].transpose(1, 0).contiguous().view(3, -1)
         pred = pred.permute(2, 0, 1).contiguous().view(3, -1)
         inds = KNearestNeighbor.apply(
-            target.unsqueeze(0), pred.unsqueeze(0), k=1)
+            target.unsqueeze(0), pred.unsqueeze(0), 1)
         target = torch.index_select(target, 1, inds.view(-1) - 1)
         target = target.view(
             3, bs * num_p, num_point_mesh).permute(1, 2, 0).contiguous()
