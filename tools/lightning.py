@@ -98,8 +98,8 @@ class TrackNet6D(LightningModule):
                 state[key] = value
         self.estimator.load_state_dict(state)
 
-    def forward(self, img, points):
-        return self.estimator(img, points)
+    def forward(self, img, points, label=None):
+        return self.estimator(img, points, label)
 
     def training_step(self, batch, batch_idx):
         total_loss = 0
@@ -115,7 +115,7 @@ class TrackNet6D(LightningModule):
             (points, img, label, gt_keypoints, gt_centers, cam,
                     objects_in_scene, unique_desig) = frame
 
-            predicted_keypoints, object_centers, segmentation = self(img, points)
+            predicted_keypoints, object_centers, segmentation = self(img, points, label)
             loss, losses = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
             total_loss += loss

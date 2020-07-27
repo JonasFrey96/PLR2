@@ -145,6 +145,30 @@ def pointwise_conv(in_features, maps, out_features):
     layers.append(nn.Conv2d(previous, out_features, kernel_size=1, padding=0, bias=True))
     return nn.Sequential(*layers)
 
+class KeypointHead(nn.Module):
+    def __init__(self, n_classes, in_features, out_features):
+        super().__init__()
+        self.out_features = out_features
+        self.n_out = n_classes + 1
+        self.batch_norm = nn.BatchNorm2d(in_features)
+        self.conv1 = nn.Conv2d(in_features, 128, 1, padding=0, bias=False)
+        self.batch_norm2 = nn.BatchNorm2d(128)
+        self.conv2 = nn.Conv2d(128, 64, 1, padding=0, bias=False)
+        self.out = nn.Conv2d(64, self.n_out * out_features, 1, stride=1, padding=0, bias=True)
+
+    def forward(self, x, label):
+        # x: N x C x H x W
+        # label: N x 1 x H x W
+        x = self.batch_norm(x)
+        x = F.relu(x, inplace=True)
+        x = self.conv1(x)
+        x = self.batch_norm2(x)
+        x = F.relu(x, inplace=True)
+        x = self.conv2(x)
+        N, C, H, W = x.shape
+        x = self.out(x).view(N, self.out_features, self.n_out, H, W)
+        return torch.gather(x, 2, label[:, :, None, :, :].expand(-1, self.out_features, -1, -1, -1))[:, :, 0]
+
 class Conv(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=3, padding=1, **kwargs):
         super().__init__()
@@ -219,11 +243,12 @@ class KeypointNet(nn.Module):
 
         self.keypoints_out = num_keypoints * 3
         self.num_classes = num_classes
-        self.keypoint_head = pointwise_conv(out_features, [128, 64], self.keypoints_out)
+
+        self.keypoint_head = KeypointHead(num_classes, out_features, self.keypoints_out)
         self.center_head = pointwise_conv(out_features, [128, 64], 3)
         self.segmentation_head = pointwise_conv(out_features, [128, 64], num_classes)
 
-    def forward(self, img, points):
+    def forward(self, img, points, label=None):
         N, C, H, W = img.shape
         features = self.features(img) # 240 x 320
         features = torch.cat([features, points], dim=1)
@@ -242,6 +267,7 @@ class KeypointNet(nn.Module):
         x = self.upsample3(x) # 240 x 320
         x = self.conv7(torch.cat([x, features], dim=1))
 
+        keypoints = self.keypoint_head(x, label)
         keypoints = self.keypoint_head(x)
         centers = self.center_head(x)
         segmentation = self.segmentation_head(x)
