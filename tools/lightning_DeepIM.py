@@ -48,7 +48,9 @@ from visu import Visualizer
 from helper import re_quat, flatten_dict
 from deep_im import DeepIM, ViewpointManager
 from helper import BoundingBox
-from helper import get_delta_t_in_euclidean, quat_to_rot
+from helper import get_delta_t_in_euclidean
+from deep_im import LossAddS
+from rotations import *
 
 # move this to seperate file
 import matplotlib.pyplot as plt
@@ -230,6 +232,8 @@ class TrackNet6D(LightningModule):
         self.criterion_refine = Loss_refine(
             num_poi, exp['d_train']['obj_list_sym'])
 
+        self.criterion_adds = LossAddS(sym_list=exp['d_train']['obj_list_sym'])
+
         self.refine = False
         self.w = exp['w_normal']
         self.w_decayed = False
@@ -248,29 +252,28 @@ class TrackNet6D(LightningModule):
         self.init_train_vali_split = False
 
     def forward(self, batch):
+
         # Hyper parameters that should  be moved to config
         refine_iterations = 3
         translation_noise = 0.03
+        # unpack batch
         points, choose, img, target, model_points, idx = batch[0:6]
         depth_img, label_img, img_orig, cam = batch[6:10]
         gt_rot_wxyz, gt_trans, unique_desig = batch[10:13]
 
-        # compute BpundingBox based on label
-        sub = torch.ones(label_img.shape, device=self.device)
-        sub = sub * idx.view((10, 1, 1)).repeat((1, 480, 640))
-
         # start with an inital guess (here we take the noisy version later from the dataloader or replay buffer implementation)
         # current estimate of the rotation and translations
+
+        # TODO add noise to inital rotation prediction
         pred_rot_wxyz, pred_trans = gt_rot_wxyz, torch.normal(
             mean=gt_trans, std=translation_noise)
-        pred_rot_mat = quat_to_rot(
-            pred_rot_wxyz, conv='wxyz', device=self.device)
-        # current estimate of the object points
-        rot_mat = pred_rot_mat.unsqueeze(1).repeat(
-            (1, model_points.shape[1], 1, 1)).view(-1, 3, 3)
+        # pred_rot_mat = quat_to_rot(
+        # pred_rot_wxyz, conv='wxyz', device=self.device)
         pred_points = target
-        # torch.add(
-        # torch.bmm(model_points.view(-1,3), rot_mat), pred_trans)
+
+        # current estimate of the object points
+        # rot_mat = pred_rot_mat.unsqueeze(1).repeat(
+        # (1, model_points.shape[1], 1, 1)).view(-1, 3, 3)
 
         w = 640
         h = 480
@@ -309,7 +312,6 @@ class TrackNet6D(LightningModule):
                 b.expand(1.1)
                 b.expand_to_correct_ratio(w, h)
                 b.move(center_real[0], center_real[1])
-                # b.plot(img_orig[j].cpu().numpy())
                 crop_real = b.crop(img_orig[j]).unsqueeze(0)
                 up = torch.nn.UpsamplingBilinear2d(size=(h, w))
                 crop_real = torch.transpose(crop_real, 1, 3)
@@ -319,53 +321,39 @@ class TrackNet6D(LightningModule):
             # stack the two images, might add additional mask as layer or depth info
             data = torch.cat([real_img, render_img], dim=1)
 
-            visu_network_input(data)
-            visu_projection(pred_points, img_orig, cam,
-                            folder='/home/jonfrey/Debug', max_images=5)
+            # visu_network_input(data)
+            # visu_projection(pred_points, img_orig, cam,
+            # folder='/home/jonfrey/Debug', max_images=5)
+            f2, f3, f4, f5, f6, delta_v, delta_rot_wxyz = self.refiner(
+                data, idx)
 
-            f2, f3, f4, f5, f6, delta_v, delta_r = self.refiner(data, idx)
+            # Update translation prediction
             pred_trans_new = get_delta_t_in_euclidean(
-                delta_v, t_src=pred_trans, fx=cam[:, 2].unsqueeze(1), fy=cam[:, 3].unsqueeze(1), device=self.device)
-            # pred_trans += delta_t
+                delta_v.clone(), t_src=pred_trans.clone(),
+                fx=cam[:, 2].unsqueeze(1), fy=cam[:, 3].unsqueeze(1), device=self.device)
             delta_t = pred_trans_new - pred_trans
-            dis, pred_points, new_target = self.criterion_refine(
-                delta_r, delta_t, target, model_points, idx, pred_points)
-
-            # update current rotation prediction
+            # delta_t can be used for bookkeeping to keep track of rotation
             pred_trans = pred_trans_new
 
-        # return position estimate of object
-        return pred_r, pred_t
+            # Update rotation prediction
+            pred_rot_wxyz = compose_quat(pred_rot_wxyz, delta_rot_wxyz)
+
+            # Compute ADD / ADD-S loss
+            dis = self.criterion_adds(pred_r=pred_rot_wxyz, pred_t=pred_trans,
+                                      target=target, model_points=model_points, idx=idx)
+
+        return dis
 
     def training_step(self, batch, batch_idx):
-        """
-        """
         total_loss = 0
         total_dis = 0
-        l = len(batch)
-        emb_ls = []
-        t_ls = []
-        gt_rot_wxyz_ls = []
-        gt_trans_ls = []
-        skip = False
 
-        pred_r, pred_t = self(batch[0])
-
-        emb_ls.append(copy.copy(ap_x))  # use the color emb or ap_x
-        t_ls.append(copy.copy(pred_t))
-        gt_rot_wxyz_ls.append(copy.copy(gt_rot_wxyz))
-        gt_trans_ls.append(copy.copy(gt_trans))
-
-        loss, dis, new_points, new_target = self.criterion(
-            pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
-        total_loss += loss
-        total_dis += dis
-
-        total_loss = torch.Tensor([1])
+        dis = self(batch[0])
+        loss = torch.sum(dis)
         # tensorboard_logs = {'train_loss': float(0), 'train_dis': float(0),
         #                     'train_loss_without_motion': float(0)}
         # 'dis': total_dis, 'log': tensorboard_logs, 'progress_bar': {'train_dis': total_dis, 'train_loss': total_loss}}
-        return {'loss': total_loss}
+        return {'loss': loss}
 
     def validation_step(self, batch, batch_idx):
         """
@@ -420,8 +408,8 @@ class TrackNet6D(LightningModule):
 
         return {'val_loss': total_loss / len(batch), 'val_dis': total_dis / len(batch), 'log': tensorboard_logs}
         """
-        val_loss = torch.Tensor([1])
-        val_dis = torch.Tensor([1])
+        val_loss = torch.ones(1)
+        val_dis = torch.ones(1)
         return {'val_loss': val_loss, 'val_dis': val_dis}
 
     def test_step(self, batch, batch_idx):
@@ -485,8 +473,8 @@ class TrackNet6D(LightningModule):
         """
         # return {**tensorboard_logs,
         #         'log': tensorboard_logs}
-        test_loss = torch.Tensor([1])
-        test_dis = torch.Tensor([1])
+        test_loss = torch.ones(1)
+        test_dis = torch.ones(1)
         return {'test_loss': test_loss, 'test_dis': test_dis}
 
     def validation_epoch_end(self, outputs):
@@ -728,25 +716,26 @@ if __name__ == "__main__":
         checkpoint = torch.load(
             exp['checkpoint_path'], map_location=lambda storage, loc: storage)
         model.load_state_dict(checkpoint['state_dict'])
-
-    trainer = Trainer(gpus=1,
-                      num_nodes=1,
-                      auto_lr_find=False,
-                      accumulate_grad_batches=exp['accumulate_grad_batches'],
-                      default_root_dir=model_path,
-                      checkpoint_callback=checkpoint_callback,
-                      early_stop_callback=early_stop_callback,
-                      fast_dev_run=True,
-                      limit_train_batches=130000,
-                      limit_val_batches=5000,
-                      limit_test_batches=1.0,
-                      val_check_interval=1.0,
-                      progress_bar_refresh_rate=0,
-                      max_epochs=100,
-                      terminate_on_nan=True)
+    with torch.autograd.set_detect_anomaly(True):
+        trainer = Trainer(gpus=1,
+                          num_nodes=1,
+                          auto_lr_find=False,
+                          accumulate_grad_batches=exp['accumulate_grad_batches'],
+                          default_root_dir=model_path,
+                          checkpoint_callback=checkpoint_callback,
+                          early_stop_callback=early_stop_callback,
+                          fast_dev_run=False,
+                          limit_train_batches=130000,
+                          limit_val_batches=5000,
+                          limit_test_batches=1.0,
+                          val_check_interval=1.0,
+                          progress_bar_refresh_rate=0,
+                          max_epochs=100,
+                          terminate_on_nan=False)
 
     if exp.get('model_mode', 'fit') == 'fit':
-        trainer.fit(model)
+        with torch.autograd.set_detect_anomaly(True):
+            trainer.fit(model)
     elif exp.get('model_mode', 'fit') == 'test':
         trainer.test(model)
         if exp.get('conv_test2df', False):

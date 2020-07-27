@@ -31,7 +31,7 @@ samples_early_break_validation: 100000
 time_early_break_validation: 10
 
 loader:
-  batch_size: 10
+  batch_size: 2
   workers: 0
 
 d_test:

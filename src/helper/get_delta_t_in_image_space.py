@@ -41,11 +41,12 @@ def get_delta_t_in_euclidean(v, t_src, fx, fy, device):
     """
     # alternative implementation override t_src for intrinisc runtime capable or pass input tensor into function
     t_pred_tar = torch.zeros(t_src.shape, device=device)
-    t_pred_tar[:, 2] = torch.true_divide(t_src[:, 2], torch.exp(v[:, 2]))
-    t_pred_tar[:, 0] = (torch.true_divide(v[:, 0], fx[:, 0]) +
-                        torch.true_divide(t_src[:, 0], t_src[:, 2])) * t_pred_tar[:, 2]
-    t_pred_tar[:, 1] = (torch.true_divide(v[:, 1], fy[:, 0]) +
-                        torch.true_divide(t_src[:, 1], t_src[:, 2])) * t_pred_tar[:, 2]
+    t_pred_tar[:, 2] = torch.true_divide(
+        t_src.clone()[:, 2], torch.exp(v.clone()[:, 2]))
+    t_pred_tar[:, 0] = (torch.true_divide(v.clone()[:, 0], fx.clone()[:, 0]) +
+                        torch.true_divide(t_src.clone()[:, 0], t_src.clone()[:, 2])) * t_pred_tar.clone()[:, 2]
+    t_pred_tar[:, 1] = (torch.true_divide(v.clone()[:, 1], fy.clone()[:, 0]) +
+                        torch.true_divide(t_src.clone()[:, 1], t_src.clone()[:, 2])) * t_pred_tar.clone()[:, 2]
     return t_pred_tar
 
 

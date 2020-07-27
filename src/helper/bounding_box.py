@@ -80,8 +80,8 @@ class BoundingBox():
             elif self.br[1] > max_width:
                 self.br[1] = max_width
         else:
-            br = copy.deepcopy(self.br)
-            tl = copy.deepcopy(self.tl)
+            br = self.br.clone()
+            tl = self.tl.clone()
             if self.tl[0] < 0:
                 tl[0] = 0
             elif self.tl[0] > max_height:

@@ -152,21 +152,6 @@ def send_email(text):
              'PLR - TrackThis - Lagopus', contents)
 
 
-def compose_quat(p, q, device):
-    """
-    input is wxyz
-    """
-    q = norm_quat(re_quat(q.squeeze(), 'wxyz')).unsqueeze(0)
-    p = norm_quat(re_quat(p.squeeze(), 'wxyz')).unsqueeze(0)
-    product = torch.zeros(
-        (max(p.shape[0], q.shape[0]), 4), dtype=torch.float32, device=device)
-    product[:, 3] = p[:, 3] * q[:, 3] - torch.sum(p[:, :3] * q[:, :3], (1))
-    product[:, :3] = (p[:, None, 3] * q[:, :3] + q[:, None, 3] * p[:, :3] +
-                      torch.cross(p[:, :3], q[:, :3]))
-
-    return re_quat(product.squeeze(0), 'xyzw')
-
-
 def rotation_angle(q, device):
     # in radians
     q = norm_quat(q)

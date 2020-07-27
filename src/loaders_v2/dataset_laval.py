@@ -14,7 +14,7 @@ import torchvision.transforms as transforms
 from scipy.spatial.transform import Rotation as R
 
 from estimation.state import State_R3xQuat, State_SE3, points
-from helper import compose_quat, rotation_angle, re_quat
+from helper import rotation_angle, re_quat
 from visu import plot_pcd, plot_two_pcd
 from helper import generate_unique_idx
 from loaders_v2 import Backend, ConfigLoader

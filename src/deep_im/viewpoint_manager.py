@@ -5,7 +5,7 @@ import torch
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 import cv2
-from helper import quat_to_rot
+from rotations import quat_to_rot
 
 
 def get_rot_vec(R):

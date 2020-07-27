@@ -14,14 +14,31 @@ import torch.nn as nn
 import random
 import torch.backends.cudnn as cudnn
 from lib.knn.__init__ import KNearestNeighbor
-from helper import quat_to_rot
+from rotations import quat_to_rot
 from lib.loss_refiner import loss_calculation
 import pytest
 import copy
 from sklearn.neighbors import KNeighborsClassifier
 
 
-def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list, permutation):
+def knn(ref, query):
+    """return indices of ref for each query point. L2 norm
+
+    Args:
+        ref ([type]): points * 3
+        query ([type]): tar_points * 3
+
+    Returns:
+        [knn]: distance = query * 1 , indices = query * 1
+    """
+    mp2 = ref.unsqueeze(0).repeat(query.shape[0], 1, 1)
+    tp2 = query.unsqueeze(1).repeat(1, ref.shape[0], 1)
+    dist = torch.norm(mp2 - tp2, dim=2, p=None)
+    knn = dist.topk(1, largest=False)
+    return knn
+
+
+def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list):
     """ADD loss calculation
 
     Args:
@@ -41,60 +58,34 @@ def loss_calculation_add(pred_r, pred_t, target, model_points, idx, sym_list, pe
 
     pred_r = pred_r / torch.norm(pred_r, dim=1).view(bs, 1)
     base = quat_to_rot(pred_r, 'wxyz').unsqueeze(1)
-    base = base.view(-1, 3, 3).cuda()
+    base = base.view(-1, 3, 3).cuda().permute(0, 2, 1)  # transposed of R
 
     pred_t = pred_t.unsqueeze(1)
+
     pred = torch.add(torch.bmm(model_points, base), pred_t)
     tf_model_points = pred.view(target.shape)
-
-    target2 = copy.deepcopy(target)
-    target3 = copy.deepcopy(target)
-    target4 = copy.deepcopy(target)
 
     for i in range(bs):
         # ckeck if add-s or add
         if idx[i, 0].item() in sym_list:
 
-            ref = target[i, :, :].unsqueeze(0).permute(0, 2, 1)
-            query = tf_model_points[i, :, :].unsqueeze(0).permute(0, 2, 1)
-
-            # sklearn
-            neigh = KNeighborsClassifier(n_neighbors=1)
-            idx_tmp = np.arange(0, num_p)
-            neigh.fit(ref.cpu().numpy()[0, :, :].T, idx_tmp)
-            idx_predict = neigh.predict(query.cpu().numpy()[0, :, :].T)
-
-            # pytorch knn
-            inds = KNearestNeighbor.apply(ref, query, 1).flatten()
-
-            target2[i, :, :] = target[i, inds - 1, :]
-
-            target3[i, :, :] = target[i, inds, :]
-
-            inds = torch.from_numpy(idx_predict.astype(np.int64))
-            target4[i, :, :] = target[i, inds, :]
+            knn_obj = knn(
+                ref=target[i, :, :], query=tf_model_points[i, :, :])
+            inds = knn_obj.indices
+            target[i, :, :] = target[i, inds[:, 0], :]
 
     dis = torch.mean(torch.norm((tf_model_points - target), dim=2), dim=1)
-    dis2 = torch.mean(torch.norm((tf_model_points - target2), dim=2), dim=1)
-    dis3 = torch.mean(torch.norm((tf_model_points - target3), dim=2), dim=1)
-    dis4 = torch.mean(torch.norm((tf_model_points - target4), dim=2), dim=1)
-    print(
-        f'\n \n loss without shuffeling {dis}; \n shuffeling with knn ind-1 {dis2}; \n shuffeling knn {dis3}; \n shuffeling sklearn knn {dis4}')
     return dis
 
 
-class Loss_add(nn.Module):
+class LossAddS(nn.Module):
 
     def __init__(self, sym_list):
-        super(Loss_add, self).__init__()
+        super(LossAddS, self).__init__()
         self.sym_list = sym_list
 
-    def forward(self, pred_r, pred_t, target, model_points, idx, permutation=0):
-        return loss_calculation_add(pred_r, pred_t, target, model_points, idx, self.sym_list, permutation)
-
-
-def test_loss_add():
-    return
+    def forward(self, pred_r, pred_t, target, model_points, idx):
+        return loss_calculation_add(pred_r, pred_t, target, model_points, idx, self.sym_list)
 
 
 if __name__ == "__main__":
@@ -105,8 +96,7 @@ if __name__ == "__main__":
     from deep_im import RearangeQuat
 
     device = 'cuda:0'
-    print('test loss')
-    bs = 1
+    bs = 100
     nr_points = 3000
 
     re_q = RearangeQuat(bs)
@@ -127,14 +117,11 @@ if __name__ == "__main__":
     pred_r_unit = torch.zeros((bs, 4), device=device)
     pred_r_unit[:, 0] = 1
 
-    # target_points = torch.ones((bs, nr_points, 3), device=device)
     sym_list = [0]
-    loss_add = Loss_add(sym_list=sym_list)
+    loss_add = LossAddS(sym_list=sym_list)
 
     idx_sym = torch.zeros((bs, 1), device=device)
     idx_nonsym = torch.ones((bs, 1), device=device)
-    # loss_add(pred_r, pred_t, target, model_points, idx)
-    # loss_add(pred_r, pred_t, target_points, model_points, idx)
 
     points = target_points
     num_pt_mesh = nr_points
@@ -143,13 +130,11 @@ if __name__ == "__main__":
                     target_points, model_points, idx_nonsym)
     print(f'dis = {loss} should be {res}')
 
-    # random shuffle indexe
+    # random shuffle index
     rand_index = torch.randperm(nr_points)
     target_points = model_points[:, rand_index, :]
     loss = loss_add(pred_r_unit, pred_t_zeros,
                     target_points, model_points, idx_nonsym)
-    print(f'Loss {loss} should be high since not useing knn')
 
     loss = loss_add(pred_r_unit, pred_t_zeros,
-                    target_points, model_points, idx_sym, rand_index)
-    print(f'Loss {loss} should be zero since useing knn')
+                    target_points, model_points, idx_sym)
