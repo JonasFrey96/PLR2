@@ -81,6 +81,13 @@ def backproject_points(p, fx, fy, cx, cy):
     """
     u = torch.round((torch.true_divide(p[:, 0], p[:, 2]) * fx) + cx)
     v = torch.round((torch.true_divide(p[:, 1], p[:, 2]) * fy) + cy)
+
+    if torch.isnan(u).any() or torch.isnan(v).any():
+        u = torch.tensor(cx).unsqueeze(0)
+        v = torch.tensor(cy).unsqueeze(0)
+        print('Predicted z=0 for translation. u=cx, v=cy')
+        # raise Exception
+
     return torch.stack([v, u]).T
 
 
@@ -166,6 +173,9 @@ def visu_projection(target, images, cam, folder='/home/jonfrey/Debug', max_image
 
         bb = BoundingBox(p1=torch.stack(
             [min1, min2]), p2=torch.stack([max1, max2]))
+
+        print(f'Bounding box is valid {bb.valid()}, {str(bb)}')
+
         bb_img = bb.plot(images[i, :, :, :3].cpu().numpy().astype(np.uint8))
         fig.add_subplot(num, 2, i * 2 + 1)
         plt.imshow(bb_img)
@@ -254,7 +264,7 @@ class TrackNet6D(LightningModule):
     def forward(self, batch):
 
         # Hyper parameters that should  be moved to config
-        refine_iterations = 3
+        refine_iterations = 1
         translation_noise = 0.03
         # unpack batch
         points, choose, img, target, model_points, idx = batch[0:6]
@@ -269,7 +279,14 @@ class TrackNet6D(LightningModule):
             mean=gt_trans, std=translation_noise)
         # pred_rot_mat = quat_to_rot(
         # pred_rot_wxyz, conv='wxyz', device=self.device)
-        pred_points = target
+
+        base_inital = quat_to_rot(
+            pred_rot_wxyz, 'wxyz', device=self.device).unsqueeze(1)
+        base_inital = base_inital.view(-1, 3, 3).permute(0,
+                                                         2, 1)  # transposed of R
+
+        pred_points = torch.add(
+            torch.bmm(model_points, base_inital), pred_trans.unsqueeze(1))
 
         # current estimate of the object points
         # rot_mat = pred_rot_mat.unsqueeze(1).repeat(
@@ -283,8 +300,11 @@ class TrackNet6D(LightningModule):
 
             render_img = torch.empty((bs, 3, h, w), device=self.device)
             # preper render data
+            st = time.time()
             img_ren, depth, h_render = self.vm.get_closest_image_batch(
                 i=idx, rot=pred_rot_wxyz, conv='wxyz')
+
+            # print(f'Total Time VM blocking {time.time()-st}')
             bb_lsd = get_bb_from_depth(depth)
             for j, b in enumerate(bb_lsd):
                 center_ren = backproject_points(
@@ -303,8 +323,9 @@ class TrackNet6D(LightningModule):
             # prepare real data
             real_img = torch.empty((bs, 3, h, w), device=self.device)
             # update the target to get new bb
-            bb_ls = get_bb_real_target(pred_points, cam, gt_trans)
+            bb_ls = get_bb_real_target(pred_points, cam, pred_trans)
             for j, b in enumerate(bb_ls):
+
                 center_real = backproject_points(
                     pred_trans[j].view(1, 3), fx=cam[j, 2], fy=cam[j, 3], cx=cam[j, 0], cy=cam[j, 1])
                 center_real = center_real.squeeze()
@@ -331,12 +352,25 @@ class TrackNet6D(LightningModule):
             pred_trans_new = get_delta_t_in_euclidean(
                 delta_v.clone(), t_src=pred_trans.clone(),
                 fx=cam[:, 2].unsqueeze(1), fy=cam[:, 3].unsqueeze(1), device=self.device)
+
+            if torch.isnan(pred_trans_new).any():
+                print(pred_trans_new, pred_trans, delta_v)
+                assert Exception
+
             delta_t = pred_trans_new - pred_trans
             # delta_t can be used for bookkeeping to keep track of rotation
             pred_trans = pred_trans_new
 
             # Update rotation prediction
             pred_rot_wxyz = compose_quat(pred_rot_wxyz, delta_rot_wxyz)
+
+            # Update pred_points
+            base_new = quat_to_rot(
+                pred_rot_wxyz, 'wxyz', device=self.device).unsqueeze(1)
+            base_new = base_new.view(-1, 3, 3).permute(0,
+                                                       2, 1)  # transposed of R
+            pred_points = torch.add(
+                torch.bmm(model_points, base_new), pred_trans.unsqueeze(1))
 
             # Compute ADD / ADD-S loss
             dis = self.criterion_adds(pred_r=pred_rot_wxyz, pred_t=pred_trans,
@@ -348,68 +382,27 @@ class TrackNet6D(LightningModule):
         total_loss = 0
         total_dis = 0
 
+        st = time.time()
         dis = self(batch[0])
         loss = torch.sum(dis)
-        # tensorboard_logs = {'train_loss': float(0), 'train_dis': float(0),
+        # print(f'Single forward pass took {time.time()-st}s')
+        tensorboard_logs = {'train_loss': float(loss)}
+
         #                     'train_loss_without_motion': float(0)}
         # 'dis': total_dis, 'log': tensorboard_logs, 'progress_bar': {'train_dis': total_dis, 'train_loss': total_loss}}
-        return {'loss': loss}
+        return {'loss': loss, 'log': tensorboard_logs}
 
     def validation_step(self, batch, batch_idx):
-        """
         total_loss = 0
         total_dis = 0
 
-        for frame in batch:
-
-            if frame[0].dtype == torch.bool:
-                continue
-
-            # unpack the batch and apply forward pass
-            points, choose, img, target, model_points, idx = frame[0:6]
-            depth_img, img_orig, cam = frame[6:9]
-            gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
-
-            pred_r, pred_t, pred_c, emb, ap_x = self(img, points, choose, idx)
-
-            loss, dis, new_points, new_target = self.criterion(
-                pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
-
-            if f'val_loss' in self._dict_track.keys():
-                self._dict_track[f'val_loss'].append(
-                    float(loss))
-                self._dict_track[f'val_dis'].append(
-                    float(dis))
-            else:
-                self._dict_track[f'val_loss'] = [float(loss)]
-                self._dict_track[f'val_dis'] = [float(dis)]
-
-            if f'val_{int(unique_desig[1])}_loss' in self._dict_track.keys():
-                self._dict_track[f'val_{int(unique_desig[1])}_loss'].append(
-                    float(loss))
-                self._dict_track[f'val_{int(unique_desig[1])}_dis'].append(
-                    float(dis))
-            else:
-                self._dict_track[f'val_{int(unique_desig[1])}_loss'] = [
-                    float(loss)]
-                self._dict_track[f'val_{int(unique_desig[1])}_dis'] = [
-                    float(dis)]
-
-            if self.number_images_log_val > self.counter_images_logged:
-                self.visu(batch_idx, pred_r, pred_t, pred_c, points,
-                          target, model_points, cam, img_orig, unique_desig)
-                self.counter_images_logged += 1
-
-            total_loss += loss
-            total_dis += dis
-
-        tensorboard_logs = {'val_loss': float(total_loss /
-                                              len(batch)), 'val_dis': float(total_dis / len(batch))}
-
-        return {'val_loss': total_loss / len(batch), 'val_dis': total_dis / len(batch), 'log': tensorboard_logs}
-        """
-        val_loss = torch.ones(1)
-        val_dis = torch.ones(1)
+        st = time.time()
+        dis = self(batch[0])
+        loss = torch.sum(dis)
+        # print(f'Single forward pass took {time.time()-st}s')
+        tensorboard_logs = {'val_loss': float(loss)}
+        val_loss = loss
+        val_dis = loss
         return {'val_loss': val_loss, 'val_dis': val_dis}
 
     def test_step(self, batch, batch_idx):
@@ -475,6 +468,8 @@ class TrackNet6D(LightningModule):
         #         'log': tensorboard_logs}
         test_loss = torch.ones(1)
         test_dis = torch.ones(1)
+        # tensorboard_logs = {'test_loss': total_loss / len(batch),
+        #                     'test_dis': total_dis / len(batch)}
         return {'test_loss': test_loss, 'test_dis': test_dis}
 
     def validation_epoch_end(self, outputs):
@@ -597,29 +592,36 @@ class TrackNet6D(LightningModule):
                                                        num_workers=self.exp['loader']['workers'],
                                                        pin_memory=True)
 
-        # TODO move to cfg
+        # TODO move store to cfg
         store = '/media/scratch1/jonfrey/datasets/YCB_Video_Dataset/viewpoints_renderings'
+        # Move load_images to cfg
         self.vm = ViewpointManager(
-            store, dataset_train._backend._name_to_idx, device=self.device)
+            store, dataset_train._backend._name_to_idx, device=self.device, load_images=False)
 
         return dataloader_train
 
-    def test_dataloader(self):
-        dataset_test = GenericDataset(
-            cfg_d=self.exp['d_test'],
-            cfg_env=self.env)
+    # def test_dataloader(self):
+    #     dataset_test = GenericDataset(
+    #         cfg_d=self.exp['d_test'],
+    #         cfg_env=self.env)
 
-        dataloader_test = torch.utils.data.DataLoader(dataset_test,
-                                                      batch_size=self.exp['loader']['batch_size'],
-                                                      shuffle=False,
-                                                      num_workers=self.exp['loader']['workers'],
-                                                      pin_memory=True)
-        return dataloader_test
+    #     dataloader_test = torch.utils.data.DataLoader(dataset_test,
+    #                                                   batch_size=self.exp['loader']['batch_size'],
+    #                                                   shuffle=False,
+    #                                                   num_workers=self.exp['loader']['workers'],
+    #                                                   pin_memory=True)
+    #     return dataloader_test
 
     def val_dataloader(self):
         dataset_val = GenericDataset(
             cfg_d=self.exp['d_train'],
             cfg_env=self.env)
+
+        # TODO move store to cfg
+        store = '/media/scratch1/jonfrey/datasets/YCB_Video_Dataset/viewpoints_renderings'
+        # Move load_images to cfg
+        self.vm = ViewpointManager(
+            store, dataset_val._backend._name_to_idx, device=self.device, load_images=False)
 
         # initalize train and validation indices
         if not self.init_train_vali_split:
@@ -716,6 +718,8 @@ if __name__ == "__main__":
         checkpoint = torch.load(
             exp['checkpoint_path'], map_location=lambda storage, loc: storage)
         model.load_state_dict(checkpoint['state_dict'])
+
+    # TODO move progress_bar_refresh_rate to cfg
     with torch.autograd.set_detect_anomaly(True):
         trainer = Trainer(gpus=1,
                           num_nodes=1,
@@ -725,17 +729,16 @@ if __name__ == "__main__":
                           checkpoint_callback=checkpoint_callback,
                           early_stop_callback=early_stop_callback,
                           fast_dev_run=False,
-                          limit_train_batches=130000,
-                          limit_val_batches=5000,
+                          limit_train_batches=5000,
+                          limit_val_batches=100,
                           limit_test_batches=1.0,
                           val_check_interval=1.0,
-                          progress_bar_refresh_rate=0,
+                          progress_bar_refresh_rate=1,
                           max_epochs=100,
                           terminate_on_nan=False)
 
     if exp.get('model_mode', 'fit') == 'fit':
-        with torch.autograd.set_detect_anomaly(True):
-            trainer.fit(model)
+        trainer.fit(model)
     elif exp.get('model_mode', 'fit') == 'test':
         trainer.test(model)
         if exp.get('conv_test2df', False):

@@ -148,16 +148,23 @@ class BoundingBox():
 
     def plot(self, img, w=5, ret_array=True, debug_plot=False):
         test = copy.deepcopy(img)
-        w = 5
-        test[int(self.tl[0]):int(self.br[0]), int(self.tl[1]) -
-             w: int(self.tl[1]) + w] = [0, 255, 0]
-        test[int(self.tl[0]):int(self.br[0]), int(self.br[1]) -
-             w: int(self.br[1]) + w] = [0, 255, 0]
 
-        test[int(self.tl[0]) - w:int(self.tl[0]) + w,
-             int(self.tl[1]): int(self.br[1])] = [0, 255, 0]
-        test[int(self.br[0]) - w:int(self.br[0]) + w,
-             int(self.tl[1]): int(self.br[1])] = [0, 255, 0]
+        if self.valid():
+            c = [0, 255, 0]
+        else:
+            c = [255, 0, 0]
+
+        _tl, _br = self.limit_bb()
+        w = 5
+        test[int(_tl[0]):int(_br[0]), int(_tl[1]) -
+             w: int(_tl[1]) + w] = c
+        test[int(_tl[0]):int(_br[0]), int(_br[1]) -
+             w: int(_br[1]) + w] = c
+
+        test[int(_tl[0]) - w:int(_tl[0]) + w,
+             int(_tl[1]): int(_br[1])] = c
+        test[int(_br[0]) - w:int(_br[0]) + w,
+             int(_tl[1]): int(_br[1])] = c
 
         if ret_array:
             return test

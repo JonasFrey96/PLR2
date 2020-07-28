@@ -1,4 +1,4 @@
-model_path: "/media/scratch1/jonfrey/models/runs/motion_branch/debug"
+model_path: "/media/scratch1/jonfrey/models/runs/deep_im/debug"
 estimator_restore: true
 estimator_load: "/media/scratch1/jonfrey/models/trained_checkpoints/ycb/pose_model_26_0.012863246640872631.pth"
 refiner_restore: false
@@ -6,10 +6,10 @@ refiner_load: "/media/scratch1/jonfrey/models/trained_checkpoints/ycb/pose_refin
 
 mail: false
 model_mode: fit
-accumulate_grad_batches: 4
+accumulate_grad_batches: 2
 
 epochs: 500
-lr: 0.0001
+lr: 0.000001
 lr_cfg:
   on_plateau_cfg:
     mode: "min"
@@ -32,7 +32,7 @@ time_early_break_validation: 10
 
 loader:
   batch_size: 2
-  workers: 0
+  workers: 3
 
 d_test:
   name: "ycb"

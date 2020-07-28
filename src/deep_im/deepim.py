@@ -75,10 +75,10 @@ class DeepIM(nn.Module):
         self.prediction = PredictionHead(num_obj)
 
     def forward(self, x, obj):
-        if self.training:
-            flow2, flow3, flow4, flow5, flow6, feat = self.flow(x)
-            feat.flatten()
-            t, r = self.prediction(feat, obj)
+        # if self.training:
+        flow2, flow3, flow4, flow5, flow6, feat = self.flow(x)
+        feat.flatten()
+        t, r = self.prediction(feat, obj)
 
         return flow2, flow3, flow4, flow5, flow6, t, r
 
