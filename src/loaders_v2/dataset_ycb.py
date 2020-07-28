@@ -15,6 +15,7 @@ from PIL import Image, ImageOps
 import logging
 import os
 import pickle
+import glob
 from loaders_v2 import Backend, ConfigLoader
 
 _xmap = np.array([[j for i in range(320)] for j in range(240)])
@@ -287,7 +288,8 @@ class YCB(Backend):
         if self._dataset_config['batch_list_cfg']['seq_length'] == 1:
             seq_list = []
             for d in desig:
-                for o in lookup_desig_to_obj[d]:
+                object_list = lookup_desig_to_obj.get(d, [])
+                for o in object_list:
 
                     obj_full_path = d[:-7]
 
@@ -399,6 +401,8 @@ class YCB(Backend):
         elif self._dataset_config['batch_list_cfg']['mode'] == 'train':
             desig_ls = self.get_desig(self._env_config['p_ycb_seq_train'])
 
+        elif self._dataset_config['batch_list_cfg']['mode'] == 'syn':
+            desig_ls = _list_synthetic_data(self._ycb_path)
         elif self._dataset_config['batch_list_cfg']['mode'] == 'train_inc_syn':
             desig_ls = self.get_desig(
                 self._env_config['p_ycb_seq_train_inc_syn'])
@@ -409,23 +413,21 @@ class YCB(Backend):
             raise AssertionError
 
         # this is needed to add noise during runtime
-        self._syn = self.get_desig(self._env_config['p_ycb_syn'])
-        self._real = self.get_desig(self._env_config['p_ycb_seq_train'])
-        name = str(self._dataset_config['batch_list_cfg'])
-        name = name.replace("""'""", '')
-        name = name.replace(" ", '')
-        name = name.replace(",", '_')
-        name = name.replace("{", '')
-        name = name.replace("}", '')
-        name = name.replace(":", '')
-        name = self._env_config['p_ycb_config'] + '/' + name + '.pkl'
-        try:
-            with open(name, 'rb') as f:
-                batch_ls = pickle.load(f)
-        except:
-            batch_ls = self.convert_desig_to_batch_list(desig_ls, lookup_dict)
+        # name = str(self._dataset_config['batch_list_cfg'])
+        # name = name.replace("""'""", '')
+        # name = name.replace(" ", '')
+        # name = name.replace(",", '_')
+        # name = name.replace("{", '')
+        # name = name.replace("}", '')
+        # name = name.replace(":", '')
+        # name = self._env_config['p_ycb_config'] + '/' + name + '.pkl'
+        # try:
+        #     with open(name, 'rb') as f:
+        #         batch_ls = pickle.load(f)
+        # except FileNotFoundError:
+        batch_ls = self.convert_desig_to_batch_list(desig_ls, lookup_dict)
 
-            pickle.dump(batch_ls, open(name, "wb"))
+        # pickle.dump(batch_ls, open(name, "wb"))
 
         return batch_ls
 
@@ -502,4 +504,13 @@ class YCB(Backend):
     @ refine.setter
     def refine(self, refine):
         self._dataset_config['output_cfg']['refine'] = refine
+
+def _list_synthetic_data(ycb_path):
+    synthetic_data = os.path.join(ycb_path, 'data_syn', '*-color.png')
+    synthetic = []
+    paths = glob.iglob(synthetic_data)
+    for path in paths:
+        desig = path.replace(ycb_path, '').replace('-color.png', '')[1:]
+        synthetic.append(desig)
+    return synthetic[:5]
 

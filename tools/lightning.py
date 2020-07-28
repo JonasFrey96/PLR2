@@ -326,17 +326,17 @@ class TrackNet6D(LightningModule):
                 store=True)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
+        optimizer = torch.optim.SGD(
             self.estimator.parameters(), lr=self.exp['lr'])
-        scheduler = {
-            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-                verbose=True,
-                **self.exp['lr_cfg']['on_plateau_cfg']),
-            'monitor': 'avg_val_loss',  # Default: val_loss
-            'interval': self.exp['lr_cfg']['interval'],
-            'frequency': self.exp['lr_cfg']['frequency']
-        }
-        return [optimizer], [scheduler]
+        # scheduler = {
+        #     'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+        #         verbose=True,
+        #         **self.exp['lr_cfg']['on_plateau_cfg']),
+        #     'monitor': 'avg_val_loss',  # Default: val_loss
+        #     'interval': self.exp['lr_cfg']['interval'],
+        #     'frequency': self.exp['lr_cfg']['frequency']
+        # }
+        return [optimizer], []
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(self.dataset_train,
@@ -459,6 +459,9 @@ if __name__ == "__main__":
             early_stop_callback=early_stop_callback,
             distributed_backend='ddp' if args.gpus > 1 else None,
             accumulate_grad_batches=exp.get('accumulate_grad', 1),
+            overfit_batches=1,
+            max_epochs=100000,
+            check_val_every_n_epoch=20000,
             fast_dev_run=args.dev)
 
     trainer.fit(model)
