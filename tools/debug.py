@@ -27,6 +27,7 @@ def read_args():
     parser.add_argument('--batch-size', '-b', type=int, default=4)
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--examples', type=int, default=1)
+    parser.add_argument('--workers', '-w', type=int, default=1)
     return parser.parse_args()
 
 def convert_to_image(img):
@@ -58,18 +59,18 @@ def main():
 
     os.makedirs('out/', exist_ok=True)
 
-    loader = DataLoader(dataset, batch_size=flags.batch_size, num_workers=1, shuffle=True, pin_memory=True)
+    loader = DataLoader(dataset, batch_size=flags.batch_size, num_workers=flags.workers, shuffle=True, pin_memory=True)
     loss_fn = KeypointLoss()
 
     for i in range(1000):
         loader_iter = iter(loader)
         for batch in loader_iter:
-            (points, img, label, gt_keypoints, gt_centers, cam,
+            (points, img, label, vertmap, gt_keypoints, gt_centers, cam,
                     objects_in_scene, unique_desig) = batch[0]
 
-            points, img, label, gt_keypoints, gt_centers, cam, objects_in_scene = [
-                    t.cuda() for t in [points, img, label, gt_keypoints, gt_centers, cam, objects_in_scene]]
-            predicted_keypoints, object_centers, segmentation = estimator(img, points, label)
+            points, img, label, vertmap, gt_keypoints, gt_centers, cam, objects_in_scene = [
+                    t.cuda() for t in [points, img, label, vertmap, gt_keypoints, gt_centers, cam, objects_in_scene]]
+            predicted_keypoints, object_centers, segmentation = estimator(img, points, vertmap, label)
             loss, (kl, cl, sl) = loss_fn(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
 
@@ -84,12 +85,12 @@ def main():
 
     with torch.no_grad():
         estimator = estimator.eval()
-        (points, img, label, gt_keypoints, gt_centers, cam,
+        (points, img, label, vertmap, gt_keypoints, gt_centers, cam,
                 objects_in_scene, unique_desig) = next(iter(loader))[0]
 
-        points, img, label, gt_keypoints, gt_centers, cam, objects_in_scene = [
-                t.cuda() for t in [points, img, label, gt_keypoints, gt_centers, cam, objects_in_scene]]
-        predicted_keypoints, object_centers, segmentation = estimator(img, points, label)
+        points, img, label, vertmap, gt_keypoints, gt_centers, cam, objects_in_scene = [
+                t.cuda() for t in [points, img, label, vertmap, gt_keypoints, gt_centers, cam, objects_in_scene]]
+        predicted_keypoints, object_centers, segmentation = estimator(img, points, vertmap, label)
 
         for i in range(img.shape[0]):
             H = 240

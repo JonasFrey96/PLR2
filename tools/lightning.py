@@ -98,8 +98,8 @@ class TrackNet6D(LightningModule):
                 state[key] = value
         self.estimator.load_state_dict(state)
 
-    def forward(self, img, points, label=None):
-        return self.estimator(img, points, label)
+    def forward(self, img, points, vertmap, label=None):
+        return self.estimator(img, points, vertmap, label)
 
     def training_step(self, batch, batch_idx):
         total_loss = 0
@@ -112,10 +112,10 @@ class TrackNet6D(LightningModule):
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, img, label, gt_keypoints, gt_centers, cam,
+            (points, img, label, vertmap, gt_keypoints, gt_centers, cam,
                     objects_in_scene, unique_desig) = frame
 
-            predicted_keypoints, object_centers, segmentation = self(img, points, label)
+            predicted_keypoints, object_centers, segmentation = self(img, points, vertmap, label)
             loss, losses = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
             total_loss += loss
@@ -147,10 +147,10 @@ class TrackNet6D(LightningModule):
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, img, label, gt_keypoints, gt_centers, cam,
+            (points, img, label, vertmap, gt_keypoints, gt_centers, cam,
                     objects_in_scene, unique_desig) = frame
 
-            predicted_keypoints, object_centers, segmentation = self(img, points)
+            predicted_keypoints, object_centers, segmentation = self(img, points, vertmap)
             loss, losses = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
 
@@ -194,8 +194,8 @@ class TrackNet6D(LightningModule):
             if frame[0].dtype == torch.bool:
                 continue
 
-            (points, img, label, gt_keypoints, gt_centers, cam, objects_in_scene, unique_desig) = frame
-            predicted_keypoints, object_centers, segmentation = self(img, points)
+            (points, img, label, vertmap, gt_keypoints, gt_centers, cam, objects_in_scene, unique_desig) = frame
+            predicted_keypoints, object_centers, segmentation = self(img, points, vertmap)
             loss, losses = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
 
@@ -326,17 +326,17 @@ class TrackNet6D(LightningModule):
                 store=True)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(
+        optimizer = torch.optim.Adam(
             self.estimator.parameters(), lr=self.exp['lr'])
-        # scheduler = {
-        #     'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-        #         verbose=True,
-        #         **self.exp['lr_cfg']['on_plateau_cfg']),
-        #     'monitor': 'avg_val_loss',  # Default: val_loss
-        #     'interval': self.exp['lr_cfg']['interval'],
-        #     'frequency': self.exp['lr_cfg']['frequency']
-        # }
-        return [optimizer], []
+        scheduler = {
+            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                verbose=True,
+                **self.exp['lr_cfg']['on_plateau_cfg']),
+            'monitor': 'avg_val_loss',  # Default: val_loss
+            'interval': self.exp['lr_cfg']['interval'],
+            'frequency': self.exp['lr_cfg']['frequency']
+        }
+        return [optimizer], [scheduler]
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(self.dataset_train,
@@ -459,9 +459,6 @@ if __name__ == "__main__":
             early_stop_callback=early_stop_callback,
             distributed_backend='ddp' if args.gpus > 1 else None,
             accumulate_grad_batches=exp.get('accumulate_grad', 1),
-            overfit_batches=1,
-            max_epochs=100000,
-            check_val_every_n_epoch=20000,
             fast_dev_run=args.dev)
 
     trainer.fit(model)

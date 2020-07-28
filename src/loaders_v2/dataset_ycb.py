@@ -198,6 +198,7 @@ class YCB(Backend):
 
         depth = np.array(depth.resize((320, 240), Image.BILINEAR))
         label = np.array(label.resize((320, 240), Image.NEAREST), dtype=np.int32)
+        vertmap = meta['vertmap']
 
         object_ids = meta['cls_indexes'].flatten().astype(np.int)
 
@@ -216,9 +217,13 @@ class YCB(Backend):
         center_vectors = torch.from_numpy(center_vectors.transpose([2, 0, 1]))
         label = torch.from_numpy(label)
 
+        vertmap = vertmap.transpose([2, 0, 1])
+        vertmap = F.interpolate(torch.from_numpy(vertmap[None]), [240, 320])[0]
+
         tup = (torch.from_numpy(cloud.astype(np.float32)),
                torch.from_numpy(img),
                label.to(torch.long),
+               vertmap,
                keypoint_vectors,
                center_vectors)
 
@@ -512,5 +517,5 @@ def _list_synthetic_data(ycb_path):
     for path in paths:
         desig = path.replace(ycb_path, '').replace('-color.png', '')[1:]
         synthetic.append(desig)
-    return synthetic[:5]
+    return synthetic
 
