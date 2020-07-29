@@ -228,6 +228,8 @@ class TrackNet6D(LightningModule):
                 exp_config_flatten[k] = 'is None'
 
         self.hparams = exp_config_flatten
+        self.hparams['lr'] = exp['lr']
+
         self.test_size = 0.9
         self.env, self.exp = env, exp
 
@@ -255,7 +257,7 @@ class TrackNet6D(LightningModule):
         self.Visu = None
         self._dict_track = {}
 
-        self.number_images_log_val = -10
+        self.number_images_log_val = 5
         self.number_images_log_test = 10
         self.counter_images_logged = 0
 
@@ -264,7 +266,8 @@ class TrackNet6D(LightningModule):
     def forward(self, batch):
 
         # Hyper parameters that should  be moved to config
-        refine_iterations = 1
+        refine_iterations = self.exp.get(
+            ['training'], {}).get('refine_iterations', 1)
         translation_noise = 0.03
         # unpack batch
         points, choose, img, target, model_points, idx = batch[0:6]
@@ -274,9 +277,8 @@ class TrackNet6D(LightningModule):
         # start with an inital guess (here we take the noisy version later from the dataloader or replay buffer implementation)
         # current estimate of the rotation and translations
 
-        # TODO add noise to inital rotation prediction
         pred_rot_wxyz, pred_trans = gt_rot_wxyz, torch.normal(
-            mean=gt_trans, std=translation_noise)
+            mean=gt_trans, std=self.exp.get(['training'], {}).get('translation_noise_inital', 0.03))
         # pred_rot_mat = quat_to_rot(
         # pred_rot_wxyz, conv='wxyz', device=self.device)
 
@@ -375,19 +377,24 @@ class TrackNet6D(LightningModule):
             # Compute ADD / ADD-S loss
             dis = self.criterion_adds(pred_r=pred_rot_wxyz, pred_t=pred_trans,
                                       target=target, model_points=model_points, idx=idx)
-
-        return dis
+        return dis, pred_rot_wxyz, pred_trans
 
     def training_step(self, batch, batch_idx):
         total_loss = 0
         total_dis = 0
 
         st = time.time()
-        dis = self(batch[0])
+        dis, _, _ = self(batch[0])
         loss = torch.sum(dis)
-        # print(f'Single forward pass took {time.time()-st}s')
-        tensorboard_logs = {'train_loss': float(loss)}
 
+        # for epoch average logging
+        try:
+            self._dict_track['train_loss'].append(float(loss))
+        except:
+            self._dict_track['train_loss'] = [float(loss)]
+
+        # tensorboard logging
+        tensorboard_logs = {'train_loss': float(loss)}
         #                     'train_loss_without_motion': float(0)}
         # 'dis': total_dis, 'log': tensorboard_logs, 'progress_bar': {'train_dis': total_dis, 'train_loss': total_loss}}
         return {'loss': loss, 'log': tensorboard_logs}
@@ -397,124 +404,53 @@ class TrackNet6D(LightningModule):
         total_dis = 0
 
         st = time.time()
-        dis = self(batch[0])
+        dis, pred_r, pred_t = self(batch[0])
         loss = torch.sum(dis)
-        # print(f'Single forward pass took {time.time()-st}s')
+
+        if self.counter_images_logged < self.number_images_log_val:
+            self.counter_images_logged += 1
+            points, choose, img, target, model_points, idx = batch[0][0:6]
+            depth_img, label_img, img_orig, cam = batch[0][6:10]
+            gt_rot_wxyz, gt_trans, unique_desig = batch[0][10:13]
+            self.visu_pose(batch_idx, pred_r[0], pred_t[0],
+                           target[0], model_points[0], cam[0], img_orig[0], unique_desig, idx[0])
+            # for epoch average logging
+        try:
+            self._dict_track['val_loss'].append(float(loss))
+        except:
+            self._dict_track['val_loss'] = [float(loss)]
+
         tensorboard_logs = {'val_loss': float(loss)}
         val_loss = loss
         val_dis = loss
         return {'val_loss': val_loss, 'val_dis': val_dis}
 
-    def test_step(self, batch, batch_idx):
-        # used for tensorboard logging
-        """
-        total_loss = 0
-        total_dis = 0
-
-        for frame in batch:
-
-            if frame[0].dtype == torch.bool:
-                continue
-
-            # unpack the batch and apply forward pass
-            points, choose, img, target, model_points, idx = frame[0:6]
-            depth_img, img_orig, cam = frame[6:9]
-            gt_rot_wxyz, gt_trans, unique_desig = frame[9:12]
-
-            pred_r, pred_t, pred_c, emb = self(img, points, choose, idx)
-
-            loss, dis, new_points, new_target = self.criterion(
-                pred_r, pred_t, pred_c, target, model_points, idx, points, self.w, self.refine)  # wxy
-
-            # self._dict_track is used to log hole epoch
-            # add dis and loss to dict
-            if f'test_loss' in self._dict_track.keys():
-                self._dict_track[f'test_loss'].append(
-                    float(loss))
-                self._dict_track[f'test_dis'].append(
-                    float(dis))
-            else:
-                self._dict_track[f'test_loss'] = [float(loss)]
-                self._dict_track[f'test_dis'] = [float(dis)]
-
-            # add all object losses individual to dataframe
-            if f'test_{int(unique_desig[1])}_loss' in self._dict_track.keys():
-                self._dict_track[f'test_{int(unique_desig[1])}_loss'].append(
-                    float(loss))
-                self._dict_track[f'test_{int(unique_desig[1])}_dis'].append(
-                    float(dis))
-            else:
-                self._dict_track[f'test_{int(unique_desig[1])}_loss'] = [
-                    float(loss)]
-                self._dict_track[f'test_{int(unique_desig[1])}_dis'] = [
-                    float(dis)]
-
-            if self.number_images_log_test > self.counter_images_logged:
-                self.visu(batch_idx, pred_r, pred_t, pred_c, points,
-                          target, model_points, cam, img_orig, unique_desig)
-                self.counter_images_logged += 1
-            if avg_dict['avg_val_dis'] < self.exp['decay_margin_start'] and not self.w_decayed:
-                self.w = self.exp['w_normal'] * self.exp['w_normal_rate']
-                self.w_decayed = True
-                print("w_rate decayed")
-
-            total_loss += loss
-            total_dis += dis
-
-        tensorboard_logs = {'test_loss': total_loss / len(batch),
-                            'test_dis': total_dis / len(batch)}
-        """
-        # return {**tensorboard_logs,
-        #         'log': tensorboard_logs}
-        test_loss = torch.ones(1)
-        test_dis = torch.ones(1)
-        # tensorboard_logs = {'test_loss': total_loss / len(batch),
-        #                     'test_dis': total_dis / len(batch)}
-        return {'test_loss': test_loss, 'test_dis': test_dis}
-
     def validation_epoch_end(self, outputs):
-        avg_val_dis_float = 1
-        return {'avg_val_dis_float': avg_val_dis_float}
-
-    """
-    def test_epoch_end(self, outputs):
-
         avg_dict = {}
+        # only keys that are logged in tensorboard are removed from log_dict !
         for old_key in list(self._dict_track.keys()):
+            if old_key.find('val') == -1:
+                continue
             avg_dict['avg_' +
                      old_key] = float(np.mean(np.array(self._dict_track[old_key])))
-        self._dict_track = {}
+            self._dict_track.pop(old_key, None)
+
+        self.counter_images_logged = 0  # reset image log counter
+
+        avg_val_dis_float = 1
+        return {'avg_val_dis_float': avg_val_dis_float, 'log': avg_dict}
+
+    def train_epoch_end(self, outputs):
+        avg_dict = {}
+        for old_key in list(self._dict_track.keys()):
+            if old_key.find('train') == -1:
+                continue
+            avg_dict['avg_' +
+                     old_key] = float(np.mean(np.array(self._dict_track[old_key])))
+            self._dict_track.pop(old_key, None)
 
         return {
             **avg_dict, 'log': avg_dict}
-
-    def validation_epoch_end(self, outputs):
-        avg_dict = {}
-        for old_key in list(self._dict_track.keys()):
-            avg_dict['avg_' +
-                     old_key] = float(np.mean(np.array(self._dict_track[old_key])))
-        self._dict_track = {}
-
-        if avg_dict['avg_val_dis'] < self.best_validation:
-
-            self.best_validation = avg_dict['avg_val_dis']
-            self.best_validation_patience_run = 0
-        else:
-            self.best_validation_patience_run += 1
-            if self.best_validation_patience_run > self.best_validation_patience:
-                print("figure out how to set stop training flag")
-
-        if avg_dict['avg_val_dis'] < self.early_stopping_value:
-            print("figure out how to set stop training flag")
-
-        self.counter_images_logged = 0  # reset image log counter
-        tensorboard_log = {}
-        for k in avg_dict.keys():
-            tensorboard_log[k] = float(avg_dict[k])
-            avg_dict[k] = torch.tensor(
-                avg_dict[k], dtype=torch.float32, device=self.device)
-
-        return {**avg_dict, 'avg_val_dis_float': float(avg_dict['avg_val_dis']), 'log': tensorboard_log}
 
     def visu(self, batch_idx, pred_r, pred_t, pred_c, points, target, model_points, cam, img_orig, unique_desig):
         if self.Visu is None:
@@ -560,11 +496,65 @@ class TrackNet6D(LightningModule):
                                       cam_fy=float(cam[0, 3]),
                                       store=True)
 
-      """
+    def visu_pose(self, batch_idx, pred_r, pred_t, target, model_points, cam, img_orig, unique_desig, idx):
+        if self.Visu is None:
+            self.Visu = Visualizer(exp['model_path'] +
+                                   '/visu/', self.logger.experiment)
+
+        self.Visu.plot_estimated_pose(tag='ground_truth_%s_obj%d' % (str(unique_desig[0][0]).replace('/', "_"), int(unique_desig[1][0])),
+                                      epoch=self.current_epoch,
+                                      img=img_orig.detach().cpu().numpy(),
+                                      points=copy.deepcopy(
+            target.detach().cpu().numpy()),
+            trans=np.array([[0, 0, 0]]),
+            rot_mat=np.diag((1, 1, 1)),
+            cam_cx=float(cam[0]),
+            cam_cy=float(cam[1]),
+            cam_fx=float(cam[2]),
+            cam_fy=float(cam[3]),
+            store=False)
+        # extract highest confident vote
+
+        t = pred_t.detach().cpu().numpy()
+        r = pred_r.detach().cpu().numpy()
+
+        rot = R.from_quat(re_quat(r, 'wxyz'))
+
+        self.Visu.plot_estimated_pose(tag='final_prediction_%s_obj%d' % (str(unique_desig[0][0]).replace('/', "_"), int(unique_desig[1][0])),
+                                      epoch=self.current_epoch,
+                                      img=img_orig[:, :,
+                                                   :].detach().cpu().numpy(),
+                                      points=copy.deepcopy(
+                                          model_points[:, :].detach(
+                                          ).cpu().numpy()),
+                                      trans=t.reshape((1, 3)),
+                                      rot_mat=rot.as_matrix(),
+                                      cam_cx=float(cam[0]),
+                                      cam_cy=float(cam[1]),
+                                      cam_fx=float(cam[2]),
+                                      cam_fy=float(cam[3]),
+                                      store=False)
+        img_ren, depth, h_render = self.vm.get_closest_image_batch(
+            i=idx.unsqueeze(0), rot=pred_r.unsqueeze(0), conv='wxyz')
+        test = 999
+
+        self.Visu.plot_estimated_pose(tag='render_with_gt_%s_obj%d' % (str(unique_desig[0][0]).replace('/', "_"), int(unique_desig[1][0])),
+                                      epoch=self.current_epoch,
+                                      img=img_ren[0, :, :,
+                                                  :].detach().cpu().numpy(),
+                                      points=copy.deepcopy(
+            target.detach().cpu().numpy()),
+            trans=np.array([[0, 0, 0]]),
+            rot_mat=np.diag((1, 1, 1)),
+            cam_cx=float(cam[0]),
+            cam_cy=float(cam[1]),
+            cam_fx=float(cam[2]),
+            cam_fy=float(cam[3]),
+            store=False)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
-            [{'params': self.refiner.parameters()}], lr=self.exp['lr'])
+            [{'params': self.refiner.parameters()}], lr=self.hparams['lr'])
         scheduler = {
             'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **self.exp['lr_cfg']['on_plateau_cfg']),
             'monitor': 'avg_val_dis',  # Default: val_loss
@@ -592,9 +582,7 @@ class TrackNet6D(LightningModule):
                                                        num_workers=self.exp['loader']['workers'],
                                                        pin_memory=True)
 
-        # TODO move store to cfg
-        store = '/media/scratch1/jonfrey/datasets/YCB_Video_Dataset/viewpoints_renderings'
-        # Move load_images to cfg
+        store = self.env['p_ycb'] + '/viewpoints_renderings'
         self.vm = ViewpointManager(
             store, dataset_train._backend._name_to_idx, device=self.device, load_images=False)
 
@@ -617,9 +605,7 @@ class TrackNet6D(LightningModule):
             cfg_d=self.exp['d_train'],
             cfg_env=self.env)
 
-        # TODO move store to cfg
-        store = '/media/scratch1/jonfrey/datasets/YCB_Video_Dataset/viewpoints_renderings'
-        # Move load_images to cfg
+        store = self.env['p_ycb'] + '/viewpoints_renderings'
         self.vm = ViewpointManager(
             store, dataset_val._backend._name_to_idx, device=self.device, load_images=False)
 
@@ -663,8 +649,8 @@ if __name__ == "__main__":
     env = ConfigLoader().from_file(env_cfg_path).get_FullLoader()
 
     """
-    Trainer args (gpus, num_nodes, etc…) && Program arguments (data_path, cluster_email, etc…)
-    Model specific arguments (layer_dim, num_layers, learning_rate, etc…)
+    Trainer args(gpus, num_nodes, etc…) & & Program arguments(data_path, cluster_email, etc…)
+    Model specific arguments(layer_dim, num_layers, learning_rate, etc…)
     """
     timestamp = datetime.datetime.now().replace(microsecond=0).isoformat()
 
@@ -719,25 +705,29 @@ if __name__ == "__main__":
             exp['checkpoint_path'], map_location=lambda storage, loc: storage)
         model.load_state_dict(checkpoint['state_dict'])
 
-    # TODO move progress_bar_refresh_rate to cfg
     with torch.autograd.set_detect_anomaly(True):
         trainer = Trainer(gpus=1,
                           num_nodes=1,
                           auto_lr_find=False,
-                          accumulate_grad_batches=exp['accumulate_grad_batches'],
+                          accumulate_grad_batches=exp['training']['accumulate_grad_batches'],
                           default_root_dir=model_path,
                           checkpoint_callback=checkpoint_callback,
                           early_stop_callback=early_stop_callback,
                           fast_dev_run=False,
-                          limit_train_batches=5000,
-                          limit_val_batches=100,
+                          limit_train_batches=200,
+                          limit_val_batches=1000,
                           limit_test_batches=1.0,
                           val_check_interval=1.0,
-                          progress_bar_refresh_rate=1,
-                          max_epochs=100,
+                          progress_bar_refresh_rate=exp['training']['accumulate_grad_batches'],
+                          max_epochs=exp['training']['max_epochs'],
                           terminate_on_nan=False)
 
     if exp.get('model_mode', 'fit') == 'fit':
+        # lr_finder = trainer.lr_find(
+        #     model, min_lr=0.0000001, max_lr=0.001, num_training=500, early_stop_threshold=100)
+        # Results can be found in
+        # lr_finder.results
+        # lr_finder.suggestion()
         trainer.fit(model)
     elif exp.get('model_mode', 'fit') == 'test':
         trainer.test(model)

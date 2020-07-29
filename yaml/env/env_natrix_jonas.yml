@@ -10,6 +10,7 @@ p_ycb_syn: "datasets/ycb/dataset_config/data_syn.txt"
 p_ycb_obj: "datasets/ycb/dataset_config/classes.txt"
 
 # external
+
 p_ycb: "/media/scratch1/jonfrey/datasets/YCB_Video_Dataset"
 p_ycb_lookup_desig_to_obj: "/home/jonfrey/PLR2/datasets/ycb/dataset_config/desig_obj_list.npy"
 p_ycb_config: "/home/jonfrey/datasets/config"

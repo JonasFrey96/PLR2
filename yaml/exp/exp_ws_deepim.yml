@@ -6,10 +6,9 @@ refiner_load: "/media/scratch1/jonfrey/models/trained_checkpoints/ycb/pose_refin
 
 mail: false
 model_mode: fit
-accumulate_grad_batches: 2
 
 epochs: 500
-lr: 0.000001
+lr: 1.0e-07
 lr_cfg:
   on_plateau_cfg:
     mode: "min"
@@ -17,6 +16,13 @@ lr_cfg:
     threshold: 0.02
   interval: "epoch"
   frequency: 1
+
+training:
+  accumulate_grad_batches: 1
+  progress_bar_refresh_rate: 1
+  translation_noise_inital: 0.03
+  refine_iterations: 1
+  max_epochs: 100
 
 early_stopping_cfg:
   patience: 100
@@ -31,8 +37,8 @@ samples_early_break_validation: 100000
 time_early_break_validation: 10
 
 loader:
-  batch_size: 2
-  workers: 3
+  batch_size: 4
+  workers: 2
 
 d_test:
   name: "ycb"
