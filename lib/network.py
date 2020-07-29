@@ -31,17 +31,19 @@ class KeypointHead(nn.Module):
         super().__init__()
         self.out_features = out_features
         self.n_out = n_classes + 1
-        self.conv1 = nn.Conv2d(in_features, 256, 1, padding=0, bias=True)
-        self.conv2 = nn.Conv2d(256, 128, 1, padding=0, bias=True)
+        self.conv1 = nn.Conv2d(in_features, 256, 1, padding=0, bias=False)
+        self.bn1 = nn.BatchNorm2d(256)
+        self.conv2 = nn.Conv2d(256, 128, 1, padding=0, bias=False)
+        self.bn2 = nn.BatchNorm2d(128)
         self.out = nn.Conv2d(128, self.n_out * out_features, 1, stride=1, padding=0, bias=True)
 
     def forward(self, x, label):
         # x: N x C x H x W
         # label: N x 1 x H x W
-        x = self.conv1(x)
-        x = F.elu(x, inplace=True)
-        x = self.conv2(x)
-        x = F.elu(x, inplace=True)
+        x = self.bn1(self.conv1(x))
+        x = F.relu(x, inplace=True)
+        x = self.bn2(self.conv2(x))
+        x = F.relu(x, inplace=True)
         N, C, H, W = x.shape
         x = self.out(x).view(N, self.out_features, self.n_out, H, W)
         return torch.gather(x, 2, label[:, None, None, :, :].expand(-1, self.out_features, -1, -1, -1))[:, :, 0]
@@ -49,11 +51,12 @@ class KeypointHead(nn.Module):
 class Conv(nn.Module):
     def __init__(self, in_features, out_features, kernel_size=3, padding=1, **kwargs):
         super().__init__()
-        self.conv = nn.Conv2d(in_features, out_features, kernel_size, padding=padding, bias=True, **kwargs)
-        self.act = nn.ELU(True)
+        self.conv = nn.Conv2d(in_features, out_features, kernel_size, padding=padding, bias=False, **kwargs)
+        self.bn = nn.BatchNorm2d(out_features)
+        self.act = nn.ReLU(True)
 
     def forward(self, x):
-        x = self.conv(x)
+        x = self.bn(self.conv(x))
         return self.act(x)
 
 class DenseBlock(nn.Module):
@@ -75,14 +78,16 @@ class DenseBlock(nn.Module):
 class Downsample(nn.Sequential):
     def __init__(self, in_features):
         super().__init__()
-        self.add_module('conv', nn.Conv2d(in_features, in_features, kernel_size=3, stride=2, padding=1, bias=True))
-        self.add_module('act', nn.ELU(True))
+        self.add_module('conv', nn.Conv2d(in_features, in_features, kernel_size=3, stride=2, padding=1, bias=False))
+        self.add_module('bn', nn.BatchNorm2d(in_features))
+        self.add_module('act', nn.ReLU(True))
 
 class Upsample(nn.Sequential):
     def __init__(self, in_features, out_features):
         super().__init__()
-        self.add_module('conv', nn.ConvTranspose2d(in_features, out_features, kernel_size=4, stride=2, padding=1, bias=True))
-        self.add_module('act', nn.ELU(True))
+        self.add_module('conv', nn.ConvTranspose2d(in_features, out_features, kernel_size=4, stride=2, padding=1, bias=False))
+        self.add_module('bn', nn.BatchNorm2d(out_features))
+        self.add_module('act', nn.ReLU(True))
 
 class KeypointNet(nn.Module):
     def __init__(self, growth_rate=16, num_keypoints=8, num_classes=22):
