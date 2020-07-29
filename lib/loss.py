@@ -92,8 +92,10 @@ class FocalLoss(_Loss):
 
         logp_t = -F.cross_entropy(input_x, target, reduce=False)
         pt = torch.exp(logp_t)
+        a_t = torch.ones_like(target) * self.alpha
+        a_t[target == 0] = (1.0 - self.alpha)
 
-        loss = -self.alpha * torch.pow(1.0 - pt, self.gamma) * logp_t
+        loss = -a_t * torch.pow(1.0 - pt, self.gamma) * logp_t
 
         if self.size_average:
             return loss.mean()
@@ -115,13 +117,14 @@ class KeypointLoss(_Loss):
         semantic: N x C x H x W
         object_ids: N
         """
+        N, K3, H, W = p_keypoints.shape
         loss_mask = gt_semantic != 0
         loss_mask = loss_mask[:, None, :, :]
-        kp_mask = loss_mask.expand(-1, p_keypoints.shape[1], -1, -1)
         seed_points = loss_mask.to(p_keypoints.dtype).sum()
+        kp_mask = loss_mask.expand(-1, K3, -1, -1)
         keypoint_loss = torch.abs(p_keypoints[kp_mask] - gt_keypoints[kp_mask]).sum() / seed_points
 
-        c_mask = loss_mask.expand(-1, p_centers.shape[1], -1, -1)
+        c_mask = loss_mask.expand(-1, 3, -1, -1)
         center_loss = torch.abs(p_centers[c_mask] - gt_centers[c_mask]).sum() / seed_points
 
         semantic_loss = self.focal_loss(p_semantic, gt_semantic)
