@@ -90,12 +90,14 @@ class FocalLoss(_Loss):
         """
         N, C, H, W = input_x.shape
 
-        logp_t = -F.cross_entropy(input_x, target, reduce=False)
-        pt = torch.exp(logp_t)
-        a_t = torch.ones_like(target) * self.alpha
+        logp = F.log_softmax(input_x, dim=1)
+        logp_t = logp.gather(1, target[:, None])
+        p_t = torch.exp(logp_t)
+
+        a_t = torch.full(target.shape, self.alpha, dtype=input_x.dtype, device=input_x.device)
         a_t[target == 0] = (1.0 - self.alpha)
 
-        loss = -a_t * torch.pow(1.0 - pt, self.gamma) * logp_t
+        loss = -a_t * torch.pow(1.0 - p_t, self.gamma) * logp_t
 
         if self.size_average:
             return loss.mean()
