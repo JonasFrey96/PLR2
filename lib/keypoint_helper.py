@@ -1,9 +1,16 @@
+import os
+import sys
+dir_path = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(dir_path)
 import torch
 import numpy as np
 
 def vote(keypoints):
-    """keypoints: N x K x 3 x P """
-    return keypoints.mean(dim=3)
+    """
+    keypoints: K x 3 x P
+    return: K x 3 aggregated keypoints
+    """
+    return keypoints.mean(dim=3) # For now, just average over the points.
 
 def solve_transform(keypoints, gt_keypoints):
     """

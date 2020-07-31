@@ -2,6 +2,9 @@ import unittest
 import numpy as np
 import torch
 from scipy.spatial.transform.rotation import Rotation
+import os
+import sys
+sys.path.append(os.getcwd())
 from lib import keypoint_helper as kh
 
 class KeypointHelperTest(unittest.TestCase):
@@ -52,8 +55,6 @@ class KeypointHelperTest(unittest.TestCase):
         np.testing.assert_allclose(R2, random_rotation2, 1e-3)
         np.testing.assert_allclose(t1, random_t, 1e-3)
         np.testing.assert_allclose(t2, random_t2, 1e-3)
-
-
 
 
 if __name__ == "__main__":
