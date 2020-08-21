@@ -139,11 +139,30 @@ class KeypointLoss(_Loss):
                 center_loss.detach(),
                 semantic_loss.detach()))
 
+class SingleObjectADDLoss:
+    def asymmetric(self, gt_T, T_hat, model_points):
+        R_hat = T_hat[:3, :3]
+        t_hat = T_hat[:3, 3, None]
+        model_points = model_points[:, :, None]
+        predicted = ((R_hat @ model_points) + t_hat)[:, :, 0]
+        R_gt = gt_T[:3, :3]
+        t_gt = gt_T[:3, 3, None]
+        ground_truth = ((R_gt @ model_points) + t_gt)[:, :, 0]
+        return (ground_truth - predicted).norm(dim=1).mean()
+
+    def symmetric(self, gt_T, T_hat, model_points):
+        ones = torch.ones(model_points.shape[0], 1, dtype=model_points.dtype).to(gt_T.device)
+        points = torch.cat([model_points, ones], dim=1)[:, :, None]
+        ground_truth = (gt_T @ points)[:, :3, 0]
+        predicted = (T_hat @ points)[:, :3, 0]
+        dima = (ground_truth[None] - predicted[:, None]).norm(dim=2)
+        min_values, _ = dima.min(dim=1)
+        return min_values.mean(dim=0)
+
 class MultiObjectADDLoss:
     def __init__(self, bandwidth=0.05, max_iter=300, cluster='mean'):
-        self.bandwidth = 0.05
-        self.max_iter = max_iter
-        self.cluster = cluster
+        self.single_object_add = SingleObjectADDLoss()
+        self.voting = VotingModule(method=cluster, bandwidth=bandwidth, max_iter=max_iter)
 
     def __call__(self, points, p_keypoints, gt_keypoints, gt_label, model_keypoints,
             object_models, objects_in_scene, add_losses, adds_losses):
@@ -160,9 +179,8 @@ class MultiObjectADDLoss:
         gt_keypoints = points[:, None] + gt_keypoints
         p_keypoints = points[:, None] + p_keypoints
         N = p_keypoints.shape[0]
-        if self.cluster=='mean_shift':
-            mean_shift = MeanShiftTorch(bandwidth=self.bandwidth, max_iter=self.max_iter)
 
+        n_points = 1000
         for i in range(N):
             indices = torch.nonzero(objects_in_scene[i]).flatten()
             for object_index in indices:
@@ -172,27 +190,16 @@ class MultiObjectADDLoss:
                 object_keypoints = p_keypoints[i, :, :, object_mask]
                 gt_object_keypoints = gt_keypoints[i, :, :, object_mask]
                 keypoints = model_keypoints[object_index]
-                if self.cluster == 'mean':
-                    gt_object_keypoints = keypoint_helper.vote(gt_object_keypoints[None])
-                    object_keypoints = keypoint_helper.vote(object_keypoints[None])
-                elif self.cluster == 'mean_shift':
-                    gt_object_kp_means = []
-                    obj_kp_means = []
-                    for k in range(gt_object_keypoints.shape[0]):
-                        gt_object_kp_means.append(mean_shift.fit(gt_object_keypoints[k,:,:].T)[0])
-                        obj_kp_means.append(mean_shift.fit(object_keypoints[k,:,:].T)[0])
-                    gt_object_keypoints = torch.stack(gt_object_kp_means, dim=0).unsqueeze(dim = 0)
-                    object_keypoints = torch.stack(obj_kp_means, dim=0).unsqueeze(dim = 0)
-                else:
-                    raise Exception('Keypoint cluster type not recognized.')
+                object_keypoints = self.voting(object_keypoints[None])
+                gt_object_keypoints = gt_object_keypoints[None, :, :].mean(dim=3)
 
                 gt_T = keypoint_helper.solve_transform(gt_object_keypoints,
                         keypoints)[0]
                 T_hat = keypoint_helper.solve_transform(object_keypoints,
                         keypoints)[0]
 
-                add = self._compute_add(gt_T, T_hat, object_models[object_index])
-                add_s = self._compute_add_symmetric(gt_T, T_hat, object_models[object_index])
+                add = self.single_object_add.asymmetric(gt_T, T_hat, object_models[object_index])
+                add_s = self.single_object_add.symmetric(gt_T, T_hat, object_models[object_index])
 
                 if object_id not in add_losses:
                     add_losses[object_id] = []
@@ -201,23 +208,3 @@ class MultiObjectADDLoss:
                 adds_losses[object_id].append(add_s.item())
 
         return add_losses, adds_losses
-
-    def _compute_add(self, gt_T, T_hat, model_points):
-        R_hat = T_hat[:3, :3]
-        t_hat = T_hat[:3, 3, None]
-        model_points = model_points[:, :, None]
-        predicted = ((R_hat @ model_points) + t_hat)[:, :, 0]
-        R_gt = gt_T[:3, :3]
-        t_gt = gt_T[:3, 3, None]
-        ground_truth = ((R_gt @ model_points) + t_gt)[:, :, 0]
-        return (ground_truth - predicted).norm(dim=1).mean()
-
-    def _compute_add_symmetric(self, gt_T, T_hat, model_points):
-        ones = torch.ones(model_points.shape[0], 1, dtype=model_points.dtype).to(gt_T.device)
-        points = torch.cat([model_points, ones], dim=1)[:, :, None]
-        ground_truth = (gt_T @ points)[:, :3, 0]
-        predicted = (T_hat @ points)[:, :3, 0]
-        dima = (ground_truth[None] - predicted[:, None]).norm(dim=2)
-        min_values, _ = dima.min(dim=1)
-        return min_values.mean(dim=0)
-

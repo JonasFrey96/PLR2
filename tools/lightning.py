@@ -63,7 +63,6 @@ class TrackNet6D(LightningModule):
             self.load_my_state_dict(state_dict)
 
         self.criterion = KeypointLoss(**exp['loss'])
-        self.add_loss = MultiObjectADDLoss()
 
         self.visualizer = None
         self._dict_track = {}
@@ -98,8 +97,8 @@ class TrackNet6D(LightningModule):
                 state[key] = value
         self.estimator.load_state_dict(state)
 
-    def forward(self, img, points, vertmap, label=None):
-        return self.estimator(img, points, vertmap, label)
+    def forward(self, img, points, vertmap):
+        return self.estimator(img, points, vertmap)
 
     def training_step(self, batch, batch_idx):
         total_loss = 0

@@ -31,8 +31,9 @@ import numpy as np
 import pickle as pkl
 import time
 
+sqrt_2pi = np.sqrt(2.0 * np.pi)
 def gaussian_kernel(distance, bandwidth):
-    return (1 / (bandwidth * torch.sqrt(2 * torch.tensor(np.pi)))) \
+    return (1. / (bandwidth * sqrt_2pi)) \
         * torch.exp(-0.5 * ((distance / bandwidth)) ** 2)
 
 
@@ -51,8 +52,8 @@ class MeanShiftTorch():
         C = A.clone()
         while True:
             it += 1
-            Ar = A.view(1, N, c).repeat(N, 1, 1)
-            Cr = C.view(N, 1, c).repeat(1, N, 1)
+            Ar = A.view(1, N, c).expand(N, -1, -1)
+            Cr = C.view(N, 1, c).expand(-1, N, -1)
             dis = torch.norm(Cr - Ar, dim=2)
             w = gaussian_kernel(dis, self.bandwidth).view(N, N, 1)
             new_C = torch.sum(w * Ar, dim=1) / torch.sum(w, dim=1)
@@ -64,7 +65,7 @@ class MeanShiftTorch():
                 # print("torch meanshift total iter:", it)
                 break
         # find biggest cluster
-        Cr = A.view(N, 1, c).repeat(1, N, 1)
+        Cr = A.view(N, 1, c).expand(-1, N, -1)
         dis = torch.norm(Ar - Cr, dim=2)
         num_in = torch.sum(dis < self.bandwidth, dim=1)
         max_num, max_idx = torch.max(num_in, 0)
@@ -80,8 +81,8 @@ class MeanShiftTorch():
         C = A.clone()
         while True:
             it += 1
-            Ar = A.view(bs, n_kps, 1, N, cn).repeat(1, 1, N, 1, 1)
-            Cr = C.view(bs, n_kps, N, 1, cn).repeat(1, 1, 1, N, 1)
+            Ar = A.view(bs, n_kps, 1, N, cn).expand(-1, -1, N, -1, -1)
+            Cr = C.view(bs, n_kps, N, 1, cn).expand(-1, -1, -1, N, -1)
             dis = torch.norm(Cr - Ar, dim=4)
             w = gaussian_kernel(dis, self.bandwidth).view(bs, n_kps, N, N, 1)
             new_C = torch.sum(w * Ar, dim=3) / torch.sum(w, dim=3)
@@ -93,7 +94,7 @@ class MeanShiftTorch():
                 # print("torch meanshift total iter:", it)
                 break
         # find biggest cluster
-        Cr = A.view(N, 1, cn).repeat(1, N, 1)
+        Cr = A.view(N, 1, cn).expand(-1, N, -1)
         dis = torch.norm(Ar - Cr, dim=4)
         num_in = torch.sum(dis < self.bandwidth, dim=3)
         # print(num_in.size())
@@ -101,7 +102,7 @@ class MeanShiftTorch():
         dis = torch.gather(dis, 2, max_idx.reshape(bs, n_kps, 1))
         labels = dis < self.bandwidth
         ctrs = torch.gather(
-            C, 2, max_idx.reshape(bs, n_kps, 1, 1).repeat(1, 1, 1, cn)
+            C, 2, max_idx.reshape(bs, n_kps, 1, 1).expand(-1, -1, -1, cn)
         )
         return ctrs, labels
 
