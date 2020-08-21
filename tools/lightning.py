@@ -114,7 +114,7 @@ class TrackNet6D(LightningModule):
             (points, img, label, vertmap, gt_keypoints, gt_centers, cam,
                     objects_in_scene, unique_desig) = frame
 
-            predicted_keypoints, object_centers, segmentation = self(img, points, vertmap, label)
+            predicted_keypoints, object_centers, segmentation = self(img, points, vertmap)
             loss, losses = self.criterion(predicted_keypoints, object_centers, segmentation,
                     gt_keypoints, gt_centers, label)
             total_loss += loss

@@ -55,7 +55,7 @@ def main():
 
     optimizer = torch.optim.Adam(estimator.parameters(), lr=flags.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1,
-            patience=25, min_lr=1e-6, verbose=True)
+            patience=50, min_lr=1e-7, verbose=True)
 
     os.makedirs('out/', exist_ok=True)
 

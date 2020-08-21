@@ -89,13 +89,9 @@ class Upsample(nn.Sequential):
         self.add_module('bn', nn.BatchNorm2d(out_features))
         self.add_module('act', nn.ReLU(True))
 
-class KeypointNet(nn.Module):
-    def __init__(self, growth_rate=16, num_keypoints=8, num_classes=22):
+class Backbone(nn.Module):
+    def __init__(self, features1, out_features, growth_rate=8):
         super().__init__()
-        self.features = nn.Sequential(
-                nn.Conv2d(3, 64, kernel_size=7, padding=3, stride=2, bias=True),
-                nn.ELU(True))
-        features1 = 70
         self.conv1 = DenseBlock(features1, layers=4, k=growth_rate)
         features2 = features1 + 4 * growth_rate
         self.downsample1 = Downsample(features2)
@@ -118,20 +114,12 @@ class KeypointNet(nn.Module):
         self.upsample3 = Upsample(features + 5 * growth_rate, 64)
         features = features1 + 64
         self.conv7 = DenseBlock(features, layers=4, k=growth_rate)
-        out_features = features + 4 * growth_rate + 6
+        features = features + 4 * growth_rate
+        self.out_features = out_features
+        self.out_conv = Conv(features, self.out_features, kernel_size=1, padding=0)
 
-        self.keypoints_out = num_keypoints * 3
-        self.num_classes = num_classes
-
-        self.keypoint_head = KeypointHead(num_classes, out_features, self.keypoints_out)
-        self.center_head = pointwise_conv(out_features, [128, 64], 3)
-        self.segmentation_head = pointwise_conv(out_features, [128, 64], num_classes)
-
-    def forward(self, img, points, vertmap, label=None):
-        N, C, H, W = img.shape
-        features = self.features(img) # 240 x 320
-        features = torch.cat([features, points, vertmap], dim=1)
-        x = self.conv1(features)
+    def forward(self, input_x):
+        x = self.conv1(input_x)
         x = self.downsample1(x) # 120 x 160
         x1 = self.conv2(x)
         x = self.downsample2(x1) # 60 x 80
@@ -144,16 +132,42 @@ class KeypointNet(nn.Module):
         x = self.upsample2(x) # 120 x 160
         x = self.conv6(torch.cat([x, x1], dim=1))
         x = self.upsample3(x) # 240 x 320
-        x = self.conv7(torch.cat([x, features], dim=1))
+        x = self.conv7(torch.cat([x, input_x], dim=1))
+        return self.out_conv(x)
 
-        x = torch.cat([x, points, vertmap], dim=1)
+class KeypointNet(nn.Module):
+    def __init__(self, growth_rate=8, num_keypoints=8, num_classes=22):
+        super().__init__()
+        self.features = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=7, padding=3, stride=2, bias=True),
+                nn.ELU(True))
+
+        self.bb_out = growth_rate * 12
+        self.rgb_backbone = Backbone(64, self.bb_out, growth_rate)
+        self.depth_backbone = Backbone(6, self.bb_out, growth_rate)
+        self.keypoints_out = num_keypoints * 3
+        self.num_classes = num_classes
+
+        out_features = self.rgb_backbone.out_features
+        self.keypoint_head = KeypointHead(num_classes, out_features + 3, self.keypoints_out)
+        self.center_head = pointwise_conv(out_features, [128, 64], 3)
+        self.segmentation_head = pointwise_conv(out_features, [128, 64], num_classes)
+
+    def forward(self, img, points, vertmap):
+        N, C, H, W = img.shape
+
+        features = self.features(img) # 240 x 320
+        x_rgb = self.rgb_backbone(features)
+        x_depth = self.depth_backbone(torch.cat([points, vertmap], dim=1))
+
+        x = x_rgb + x_depth
 
         segmentation = self.segmentation_head(x)
 
-        if label is None:
-            label = segmentation.argmax(dim=1)
+        seg_mask = segmentation.argmax(dim=1)
 
-        keypoints = self.keypoint_head(x, label)
+        x_points = torch.cat([x, points], dim=1)
+        keypoints = self.keypoint_head(x_points, seg_mask)
         centers = self.center_head(x)
 
         return keypoints, centers, segmentation
