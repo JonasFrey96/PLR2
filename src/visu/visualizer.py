@@ -9,6 +9,7 @@ import copy
 import torch
 import numpy as np
 import k3d
+import cv2
 
 
 class Visualizer():
@@ -20,6 +21,74 @@ class Visualizer():
 
         if not os.path.exists(self.p_visu):
             os.makedirs(self.p_visu)
+
+    def plot_contour(self,
+                     tag,
+                     epoch,
+                     img,
+                     points,
+                     cam_cx=0,
+                     cam_cy=0,
+                     cam_fx=0,
+                     cam_fy=0,
+                     trans=[[0, 0, 0]],
+                     rot_mat=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                     store=False,
+                     jupyter=False,
+                     thickness=2,
+                     color=(0, 255, 0)):
+        """
+        tag := tensorboard tag 
+        epoch := tensorboard epoche
+        store := ture -> stores the image to standard path
+        path := != None creats the path and store to it path/tag.png
+        img:= original_image, [widht,height,RGB], torch
+        points:= points of the object model [length,x,y,z]
+        trans: [1,3]
+        rot: [3,3]
+        """
+        rot_mat = np.array(rot_mat)
+        trans = np.array(trans)
+        img_f = copy.deepcopy(img).numpy().astype(np.uint8)
+        points = np.dot(points, rot_mat.T)
+        points = np.add(points, trans[0, :])
+        h = img_f.shape[0]
+        w = img_f.shape[1]
+        acc_array = np.zeros((h, w, 1), dtype=np.uint8)
+
+        # project pointcloud onto image
+        for i in range(0, points.shape[0]):
+            p_x = points[i, 0]
+            p_y = points[i, 1]
+            p_z = points[i, 2]
+            u = int(((p_x / p_z) * cam_fx) + cam_cx)
+            v = int(((p_y / p_z) * cam_fy) + cam_cy)
+            try:
+                a = 10
+                acc_array[v - a:v + a + 1, u - a:u + a + 1, 0] = 1
+            except:
+                pass
+
+        kernel = np.ones((a * 2, a * 2, 1), np.uint8)
+        erosion = cv2.erode(acc_array, kernel, iterations=1)
+        image, contours, hierarchy = cv2.findContours(
+            np.expand_dims(erosion, 2), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        out = np.zeros((h, w, 3), dtype=np.uint8)
+        cv2.drawContours(out, contours, -1, (0, 255, 0), 3)
+
+        for i in range(h):
+            for j in range(w):
+                if out[i, j, 1] == 255:
+                    img_f[i, j, :] = out[i, j, :]
+        if jupyter:
+            display(Image.fromarray(img_f))
+
+        if store:
+            save_image(img_f, tag=str(epoch) + tag, p_store=self.p_visu)
+
+        if self.writer is not None:
+            self.writer.add_image(tag, img_f.astype(
+                np.uint8), global_step=epoch, dataformats='HWC')
 
     def plot_estimated_pose(self, tag, epoch, img, points, trans=[[0, 0, 0]], rot_mat=[[1, 0, 0], [0, 1, 0], [0, 0, 1]], cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, store=False, jupyter=False, w=2):
         """

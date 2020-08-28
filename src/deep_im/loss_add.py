@@ -13,9 +13,7 @@ import numpy as np
 import torch.nn as nn
 import random
 import torch.backends.cudnn as cudnn
-from lib.knn.__init__ import KNearestNeighbor
 from rotations import quat_to_rot
-from lib.loss_refiner import loss_calculation
 import pytest
 import copy
 from sklearn.neighbors import KNeighborsClassifier

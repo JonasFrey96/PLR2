@@ -37,11 +37,11 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 coloredlogs.install()
 
 # network dense fusion
-from lib.loss import Loss
-from lib.loss_refiner import Loss_refine
-from lib.network import PoseNet, PoseRefineNet
-from lib.motion_network import MotionNetwork
-from lib.motion_loss import motion_loss
+#from lib.loss import Loss
+#from lib.loss_refiner import Loss_refine
+#from lib.network import PoseNet, PoseRefineNet
+#from lib.motion_network import MotionNetwork
+#from lib.motion_loss import motion_loss
 # dataset
 from loaders_v2 import GenericDataset
 from visu import Visualizer
@@ -79,8 +79,9 @@ def backproject_points(p, fx, fy, cx, cy):
     """
     p.shape = (nr_points,xyz)
     """
-    u = torch.round((torch.true_divide(p[:, 0], p[:, 2]) * fx) + cx)
-    v = torch.round((torch.true_divide(p[:, 1], p[:, 2]) * fy) + cy)
+    # true_divide
+    u = torch.round((torch.div(p[:, 0], p[:, 2]) * fx) + cx)
+    v = torch.round((torch.div(p[:, 1], p[:, 2]) * fy) + cy)
 
     if torch.isnan(u).any() or torch.isnan(v).any():
         u = torch.tensor(cx).unsqueeze(0)
@@ -220,7 +221,9 @@ def get_bb_real_target(target, cam, gt_trans):
 class TrackNet6D(LightningModule):
     def __init__(self, exp, env):
         super().__init__()
-
+        self.vm = None
+        self.nr_of_images_per_object = exp.get(
+            'vm_nr_of_images_per_object', 10)
         # logging h-params
         exp_config_flatten = flatten_dict(copy.deepcopy(exp))
         for k in exp_config_flatten.keys():
@@ -239,10 +242,10 @@ class TrackNet6D(LightningModule):
             21, restore_deepim_refiner)
 
         num_poi = exp['d_train']['num_pt_mesh_small']
-        self.criterion = Loss(num_poi, exp['d_train']['obj_list_sym'])
+        #self.criterion = Loss(num_poi, exp['d_train']['obj_list_sym'])
         num_poi = exp['d_train']['num_pt_mesh_large']
-        self.criterion_refine = Loss_refine(
-            num_poi, exp['d_train']['obj_list_sym'])
+        # self.criterion_refine = Loss_refine(
+        #    num_poi, exp['d_train']['obj_list_sym'])
 
         self.criterion_adds = LossAddS(sym_list=exp['d_train']['obj_list_sym'])
 
@@ -267,7 +270,7 @@ class TrackNet6D(LightningModule):
 
         # Hyper parameters that should  be moved to config
         refine_iterations = self.exp.get(
-            ['training'], {}).get('refine_iterations', 1)
+            'training', {}).get('refine_iterations', 1)
         translation_noise = 0.03
         # unpack batch
         points, choose, img, target, model_points, idx = batch[0:6]
@@ -278,7 +281,7 @@ class TrackNet6D(LightningModule):
         # current estimate of the rotation and translations
 
         pred_rot_wxyz, pred_trans = gt_rot_wxyz, torch.normal(
-            mean=gt_trans, std=self.exp.get(['training'], {}).get('translation_noise_inital', 0.03))
+            mean=gt_trans, std=self.exp.get('training', {}).get('translation_noise_inital', 0.03))
         # pred_rot_mat = quat_to_rot(
         # pred_rot_wxyz, conv='wxyz', device=self.device)
 
@@ -374,9 +377,10 @@ class TrackNet6D(LightningModule):
             pred_points = torch.add(
                 torch.bmm(model_points, base_new), pred_trans.unsqueeze(1))
 
-            # Compute ADD / ADD-S loss
-            dis = self.criterion_adds(pred_r=pred_rot_wxyz, pred_t=pred_trans,
-                                      target=target, model_points=model_points, idx=idx)
+        # Compute ADD / ADD-S loss
+        dis = self.criterion_adds(pred_r=pred_rot_wxyz, pred_t=pred_trans,
+                                  target=target, model_points=model_points, idx=idx)
+
         return dis, pred_rot_wxyz, pred_trans
 
     def training_step(self, batch, batch_idx):
@@ -386,7 +390,7 @@ class TrackNet6D(LightningModule):
         st = time.time()
         dis, _, _ = self(batch[0])
         loss = torch.sum(dis)
-
+        print(time.time() - st)
         # for epoch average logging
         try:
             self._dict_track['train_loss'].append(float(loss))
@@ -576,15 +580,19 @@ class TrackNet6D(LightningModule):
 
         dataset_subset = torch.utils.data.Subset(
             dataset_train, self.indices_train)
+
         dataloader_train = torch.utils.data.DataLoader(dataset_train,
-                                                       batch_size=self.exp['loader']['batch_size'],
+                                                       batch_size=self.exp[
+                                                           'loader']['batch_size'],
                                                        shuffle=True,
-                                                       num_workers=self.exp['loader']['workers'],
+                                                       num_workers=self.exp[
+                                                           'loader']['workers'],
                                                        pin_memory=True)
 
         store = self.env['p_ycb'] + '/viewpoints_renderings'
-        self.vm = ViewpointManager(
-            store, dataset_train._backend._name_to_idx, device=self.device, load_images=False)
+        if self.vm is None:
+            self.vm = ViewpointManager(
+                store, dataset_train._backend._name_to_idx, nr_of_images_per_object=self.nr_of_images_per_object, device=self.device, load_images=False)
 
         return dataloader_train
 
@@ -606,8 +614,13 @@ class TrackNet6D(LightningModule):
             cfg_env=self.env)
 
         store = self.env['p_ycb'] + '/viewpoints_renderings'
-        self.vm = ViewpointManager(
-            store, dataset_val._backend._name_to_idx, device=self.device, load_images=False)
+        if self.vm is None:
+            self.vm = ViewpointManager(
+                store,
+                dataset_val._backend._name_to_idx,
+                nr_of_images_per_object=self.nr_of_images_per_object,
+                device=self.device,
+                load_images=False)
 
         # initalize train and validation indices
         if not self.init_train_vali_split:

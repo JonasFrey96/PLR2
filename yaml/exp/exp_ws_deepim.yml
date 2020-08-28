@@ -37,8 +37,8 @@ samples_early_break_validation: 100000
 time_early_break_validation: 10
 
 loader:
-  batch_size: 4
-  workers: 2
+  batch_size: 10
+  workers: 12
 
 d_test:
   name: "ycb"
