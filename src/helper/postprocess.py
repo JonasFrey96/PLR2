@@ -1,8 +1,6 @@
 import numpy as np
 import os
 import sys
-sys.path.append('/home/jonfrey/PLR/src/')
-sys.path.append('/home/jonfrey/PLR/src/dense_fusion')
 from math import pi
 from PIL import Image
 from matplotlib import pyplot as plt
@@ -11,7 +9,6 @@ from helper import re_quat, rotation_angle
 from estimation.filter import Linear_Estimator, Kalman_Filter
 from estimation.state import State_R3xQuat, State_SE3, points
 from estimation.errors import ADD, ADDS, translation_error, rotation_error
-from visu import plot_pcd, SequenceVisualizer
 from copy import deepcopy
 from scipy.spatial.transform import Rotation as R
 import pandas as pd

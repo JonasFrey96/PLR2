@@ -222,8 +222,9 @@ class TrackNet6D(LightningModule):
     def __init__(self, exp, env):
         super().__init__()
         self.vm = None
+        self.visu_forward = False
         self.nr_of_images_per_object = exp.get(
-            'vm_nr_of_images_per_object', 10)
+            'vm_nr_of_images_per_object', 500)
         # logging h-params
         exp_config_flatten = flatten_dict(copy.deepcopy(exp))
         for k in exp_config_flatten.keys():
@@ -271,6 +272,14 @@ class TrackNet6D(LightningModule):
         # Hyper parameters that should  be moved to config
         refine_iterations = self.exp.get(
             'training', {}).get('refine_iterations', 1)
+        rand = self.exp.get(
+            'training', {}).get('refine_iterations_range', 0)
+        # uniform distributions of refine iterations +- refine_iterations_range
+        # default: refine_iterations = refine_iterations
+        if rand > 0:
+            refine_iterations = random.randrange(
+                refine_iterations - rand, refine_iterations + rand)
+
         translation_noise = 0.03
         # unpack batch
         points, choose, img, target, model_points, idx = batch[0:6]
@@ -293,15 +302,23 @@ class TrackNet6D(LightningModule):
         pred_points = torch.add(
             torch.bmm(model_points, base_inital), pred_trans.unsqueeze(1))
 
-        # current estimate of the object points
-        # rot_mat = pred_rot_mat.unsqueeze(1).repeat(
-        # (1, model_points.shape[1], 1, 1)).view(-1, 3, 3)
-
         w = 640
         h = 480
         bs = img.shape[0]
 
         for i in range(0, refine_iterations):
+            # check if the current estimate of the objects position is within some bound
+            # translation bounding:
+            deviation = torch.abs(torch.norm(pred_trans - gt_trans, dim=1))
+            for j in range(0, bs):
+                if deviation[j] > self.exp.get('training', {}).get('trans_deviation_resample_inital_pose', 0.3):
+                    pred_trans[j] = torch.normal(
+                        mean=gt_trans[j], std=self.exp.get('training', {}).get('translation_noise_inital', 0.03))
+
+            deviation_post = torch.abs(
+                torch.norm(pred_trans - gt_trans, dim=1))
+            if torch.sum(deviation) != torch.sum(deviation_post):
+                print("violated limit 0.3")
 
             render_img = torch.empty((bs, 3, h, w), device=self.device)
             # preper render data
@@ -312,6 +329,10 @@ class TrackNet6D(LightningModule):
             # print(f'Total Time VM blocking {time.time()-st}')
             bb_lsd = get_bb_from_depth(depth)
             for j, b in enumerate(bb_lsd):
+                if not b.check_min_size():
+                    print("the bounding box violates the min size constrain")
+                    print(b)
+
                 center_ren = backproject_points(
                     h_render[j, :3, 3].view(1, 3), fx=cam[j, 2], fy=cam[j, 3], cx=cam[j, 0], cy=cam[j, 1])
                 center_ren = center_ren.squeeze()
@@ -330,6 +351,9 @@ class TrackNet6D(LightningModule):
             # update the target to get new bb
             bb_ls = get_bb_real_target(pred_points, cam, pred_trans)
             for j, b in enumerate(bb_ls):
+                if not b.check_min_size():
+                    print("the bounding box violates the min size constrain")
+                    print(b)
 
                 center_real = backproject_points(
                     pred_trans[j].view(1, 3), fx=cam[j, 2], fy=cam[j, 3], cx=cam[j, 0], cy=cam[j, 1])
@@ -347,8 +371,22 @@ class TrackNet6D(LightningModule):
             # stack the two images, might add additional mask as layer or depth info
             data = torch.cat([real_img, render_img], dim=1)
 
-            # visu_network_input(data)
-            # visu_projection(pred_points, img_orig, cam,
+            if self.visu_forward:
+                self.Visu.visu_network_input(tag="network_input",
+                                             epoch=self.current_epoch,
+                                             data=data,
+                                             max_images=10,
+                                             store=True,
+                                             jupyter=False)
+                self.Visu.plot_batch_projection(tag='batch_projection',
+                                                epoch=self.current_epoch,
+                                                images=img_orig,
+                                                target=pred_points,
+                                                cam=cam,
+                                                max_images=10,
+                                                store=True,
+                                                jupyter=False)
+
             # folder='/home/jonfrey/Debug', max_images=5)
             f2, f3, f4, f5, f6, delta_v, delta_rot_wxyz = self.refiner(
                 data, idx)
@@ -363,8 +401,13 @@ class TrackNet6D(LightningModule):
                 assert Exception
 
             delta_t = pred_trans_new - pred_trans
-            # delta_t can be used for bookkeeping to keep track of rotation
-            pred_trans = pred_trans_new
+            # delta_t can be used for bookkeeping to keep track of the translation
+
+            # limit delta_t to be within 10cm
+            val = exp.get('training', {}).get('clamp_delta_t_pred', 0.1)
+            delta_t_clamp = torch.clamp(delta_t, -val, val)
+
+            pred_trans = pred_trans + delta_t_clamp
 
             # Update rotation prediction
             pred_rot_wxyz = compose_quat(pred_rot_wxyz, delta_rot_wxyz)
@@ -384,13 +427,13 @@ class TrackNet6D(LightningModule):
         return dis, pred_rot_wxyz, pred_trans
 
     def training_step(self, batch, batch_idx):
+        self.visu_forward = False
         total_loss = 0
         total_dis = 0
 
         st = time.time()
         dis, _, _ = self(batch[0])
         loss = torch.sum(dis)
-        print(time.time() - st)
         # for epoch average logging
         try:
             self._dict_track['train_loss'].append(float(loss))
@@ -412,6 +455,7 @@ class TrackNet6D(LightningModule):
         loss = torch.sum(dis)
 
         if self.counter_images_logged < self.number_images_log_val:
+            self.visu_forward = True
             self.counter_images_logged += 1
             points, choose, img, target, model_points, idx = batch[0][0:6]
             depth_img, label_img, img_orig, cam = batch[0][6:10]
@@ -419,6 +463,8 @@ class TrackNet6D(LightningModule):
             self.visu_pose(batch_idx, pred_r[0], pred_t[0],
                            target[0], model_points[0], cam[0], img_orig[0], unique_desig, idx[0])
             # for epoch average logging
+        else:
+            self.visu_forward = False
         try:
             self._dict_track['val_loss'].append(float(loss))
         except:
@@ -456,7 +502,18 @@ class TrackNet6D(LightningModule):
         return {
             **avg_dict, 'log': avg_dict}
 
-    def visu(self, batch_idx, pred_r, pred_t, pred_c, points, target, model_points, cam, img_orig, unique_desig):
+    def visu(self,
+             batch_idx,
+             pred_r,
+             pred_t,
+             pred_c,
+             points,
+             target,
+             model_points,
+             cam,
+             img_orig,
+             unique_desig,
+             store=True):
         if self.Visu is None:
             self.Visu = Visualizer(exp['model_path'] +
                                    '/visu/', self.logger.experiment)
@@ -472,7 +529,7 @@ class TrackNet6D(LightningModule):
             cam_cy=float(cam[0, 1]),
             cam_fx=float(cam[0, 2]),
             cam_fy=float(cam[0, 3]),
-            store=True)
+            store=store)
         # extract highest confident vote
         how_max, which_max = torch.max(pred_c, 1)
         div = (torch.norm(pred_r, dim=2).view(1, 1000, 1))
@@ -498,30 +555,27 @@ class TrackNet6D(LightningModule):
                                       cam_cy=float(cam[0, 1]),
                                       cam_fx=float(cam[0, 2]),
                                       cam_fy=float(cam[0, 3]),
-                                      store=True)
+                                      store=store)
 
-    def visu_pose(self, batch_idx, pred_r, pred_t, target, model_points, cam, img_orig, unique_desig, idx):
+    def visu_pose(self, batch_idx, pred_r, pred_t, target, model_points, cam, img_orig, unique_desig, idx, store=True):
         if self.Visu is None:
             self.Visu = Visualizer(exp['model_path'] +
                                    '/visu/', self.logger.experiment)
 
+        points = copy.deepcopy(target.detach().cpu().numpy())
+        img = img_orig.detach().cpu().numpy()
         self.Visu.plot_estimated_pose(tag='ground_truth_%s_obj%d' % (str(unique_desig[0][0]).replace('/', "_"), int(unique_desig[1][0])),
                                       epoch=self.current_epoch,
-                                      img=img_orig.detach().cpu().numpy(),
-                                      points=copy.deepcopy(
-            target.detach().cpu().numpy()),
-            trans=np.array([[0, 0, 0]]),
-            rot_mat=np.diag((1, 1, 1)),
-            cam_cx=float(cam[0]),
-            cam_cy=float(cam[1]),
-            cam_fx=float(cam[2]),
-            cam_fy=float(cam[3]),
-            store=False)
-        # extract highest confident vote
+                                      img=img,
+                                      points=points,
+                                      cam_cx=float(cam[0]),
+                                      cam_cy=float(cam[1]),
+                                      cam_fx=float(cam[2]),
+                                      cam_fy=float(cam[3]),
+                                      store=store)
 
         t = pred_t.detach().cpu().numpy()
         r = pred_r.detach().cpu().numpy()
-
         rot = R.from_quat(re_quat(r, 'wxyz'))
 
         self.Visu.plot_estimated_pose(tag='final_prediction_%s_obj%d' % (str(unique_desig[0][0]).replace('/', "_"), int(unique_desig[1][0])),
@@ -537,7 +591,7 @@ class TrackNet6D(LightningModule):
                                       cam_cy=float(cam[1]),
                                       cam_fx=float(cam[2]),
                                       cam_fy=float(cam[3]),
-                                      store=False)
+                                      store=store)
         img_ren, depth, h_render = self.vm.get_closest_image_batch(
             i=idx.unsqueeze(0), rot=pred_r.unsqueeze(0), conv='wxyz')
         test = 999
@@ -554,7 +608,7 @@ class TrackNet6D(LightningModule):
             cam_cy=float(cam[1]),
             cam_fx=float(cam[2]),
             cam_fy=float(cam[3]),
-            store=False)
+            store=store)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -592,7 +646,12 @@ class TrackNet6D(LightningModule):
         store = self.env['p_ycb'] + '/viewpoints_renderings'
         if self.vm is None:
             self.vm = ViewpointManager(
-                store, dataset_train._backend._name_to_idx, nr_of_images_per_object=self.nr_of_images_per_object, device=self.device, load_images=False)
+                store=store,
+                name_to_idx=dataset_train._backend._name_to_idx,
+                nr_of_images_per_object=self.exp.get(
+                    'vm', {}).get('nr_of_images_per_object', 1000),
+                device=self.device,
+                load_images=self.exp.get('vm', {}).get('load_images', False))
 
         return dataloader_train
 
@@ -616,11 +675,12 @@ class TrackNet6D(LightningModule):
         store = self.env['p_ycb'] + '/viewpoints_renderings'
         if self.vm is None:
             self.vm = ViewpointManager(
-                store,
-                dataset_val._backend._name_to_idx,
-                nr_of_images_per_object=self.nr_of_images_per_object,
+                store=store,
+                name_to_idx=dataset_val._backend._name_to_idx,
+                nr_of_images_per_object=self.exp.get(
+                    'vm', {}).get('nr_of_images_per_object', 1000),
                 device=self.device,
-                load_images=False)
+                load_images=self.exp.get('vm', {}).get('load_images', False))
 
         # initalize train and validation indices
         if not self.init_train_vali_split:
@@ -727,8 +787,8 @@ if __name__ == "__main__":
                           checkpoint_callback=checkpoint_callback,
                           early_stop_callback=early_stop_callback,
                           fast_dev_run=False,
-                          limit_train_batches=200,
-                          limit_val_batches=1000,
+                          limit_train_batches=100,
+                          limit_val_batches=100,
                           limit_test_batches=1.0,
                           val_check_interval=1.0,
                           progress_bar_refresh_rate=exp['training']['accumulate_grad_batches'],

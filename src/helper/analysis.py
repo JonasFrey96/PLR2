@@ -1,9 +1,9 @@
 import numpy as np
 import os
 import sys
-sys.path.append('/home/jonfrey/PLR/src/')
-sys.path.append('/home/jonfrey/PLR/src/dense_fusion')
-sys.path.append('/home/jonfrey/PLR/src/visu')
+sys.path.append('/home/jonfrey/PLR2/src/')
+sys.path.append('/home/jonfrey/PLR2/src/dense_fusion')
+sys.path.append('/home/jonfrey/PLR2/src/visu')
 from math import pi
 from PIL import Image
 from matplotlib import pyplot as plt

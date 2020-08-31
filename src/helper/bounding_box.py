@@ -40,6 +40,12 @@ class BoundingBox():
     def height(self):
         return (self.br[0] - self.tl[0])
 
+    def check_min_size(self, min_h=40, min_w=40):
+        if self.height() < min_h or self.width() < min_w:
+            return False
+        else:
+            return True
+
     def move(self, u, v):
         self.br[0] += u
         self.tl[0] += u

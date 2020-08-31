@@ -17,12 +17,23 @@ lr_cfg:
   interval: "epoch"
   frequency: 1
 
+vm:
+  nr_of_images_per_object: 500
+  load: True
+
 training:
   accumulate_grad_batches: 1
   progress_bar_refresh_rate: 1
   translation_noise_inital: 0.03
   refine_iterations: 1
+  refine_iterations_range: 0 # iteareatioons elemen refine_iterations +- refine_iterations_range
   max_epochs: 100
+  clamp_delta_t_pred: 0.1
+  trans_deviation_resample_inital_pose: 0.3
+
+visu:
+  number_images_log_test: 1
+  number_images_log_val: 1
 
 early_stopping_cfg:
   patience: 100
@@ -38,7 +49,7 @@ time_early_break_validation: 10
 
 loader:
   batch_size: 10
-  workers: 12
+  workers: 4
 
 d_test:
   name: "ycb"

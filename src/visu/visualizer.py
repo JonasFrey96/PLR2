@@ -1,15 +1,56 @@
-import numpy as np
 import sys
 import os
-from PIL import Image
-from visu.helper_functions import save_image
-from scipy.spatial.transform import Rotation as R
-from helper import re_quat
-import copy
-import torch
+
+if __name__ == "__main__":
+    # load data
+    os.chdir('/home/jonfrey/PLR2')
+    sys.path.append('src')
+    sys.path.append('src/dense_fusion')
+
 import numpy as np
+import torch
+import matplotlib.pyplot as plt
+
+from PIL import Image
+from scipy.spatial.transform import Rotation as R
+import copy
 import k3d
 import cv2
+import io
+
+
+from visu import save_image
+from helper import re_quat
+from helper import BoundingBox
+
+
+def backproject_points(p, fx, fy, cx, cy):
+    """
+    p.shape = (nr_points,xyz)
+    """
+    # true_divide
+    u = torch.round((torch.div(p[:, 0], p[:, 2]) * fx) + cx)
+    v = torch.round((torch.div(p[:, 1], p[:, 2]) * fy) + cy)
+
+    if torch.isnan(u).any() or torch.isnan(v).any():
+        u = torch.tensor(cx).unsqueeze(0)
+        v = torch.tensor(cy).unsqueeze(0)
+        print('Predicted z=0 for translation. u=cx, v=cy')
+        # raise Exception
+
+    return torch.stack([v, u]).T
+
+
+def get_img_from_fig(fig, dpi=180):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi)
+    buf.seek(0)
+    img_arr = np.frombuffer(buf.getvalue(), dtype=np.uint8)
+    buf.close()
+    img = cv2.imdecode(img_arr, 1)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    return img
 
 
 class Visualizer():
@@ -84,13 +125,21 @@ class Visualizer():
             display(Image.fromarray(img_f))
 
         if store:
-            save_image(img_f, tag=str(epoch) + tag, p_store=self.p_visu)
+            save_image(img_f, tag=str(epoch) + '_' + tag, p_store=self.p_visu)
 
         if self.writer is not None:
             self.writer.add_image(tag, img_f.astype(
                 np.uint8), global_step=epoch, dataformats='HWC')
 
-    def plot_estimated_pose(self, tag, epoch, img, points, trans=[[0, 0, 0]], rot_mat=[[1, 0, 0], [0, 1, 0], [0, 0, 1]], cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0, store=False, jupyter=False, w=2):
+    def plot_estimated_pose(self,
+                            tag,
+                            epoch,
+                            img,
+                            points,
+                            trans=[[0, 0, 0]],
+                            rot_mat=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                            cam_cx=0, cam_cy=0, cam_fx=0, cam_fy=0,
+                            store=False, jupyter=False, w=2):
         """
         tag := tensorboard tag 
         epoch := tensorboard epoche
@@ -101,6 +150,10 @@ class Visualizer():
         trans: [1,3]
         rot: [3,3]
         """
+        if type(rot_mat) == list:
+            rot_mat = np.array(rot_mat)
+        if type(trans) == list:
+            trans = np.array(trans)
 
         img_d = copy.deepcopy(img)
         points = np.dot(points, rot_mat.T)
@@ -125,7 +178,7 @@ class Visualizer():
         if store:
             #store_ar = (img_d* 255).round().astype(np.uint8)
             #print("IMAGE D:" ,img_d,img_d.shape )
-            save_image(img_d, tag=str(epoch) + tag, p_store=self.p_visu)
+            save_image(img_d, tag=str(epoch) + '_' + tag, p_store=self.p_visu)
         if self.writer is not None:
             self.writer.add_image(tag, img_d.astype(
                 np.uint8), global_step=epoch, dataformats='HWC')
@@ -176,6 +229,93 @@ class Visualizer():
         if self.writer is not None:
             self.writer.add_image(tag, img_d.astype(
                 np.uint8), global_step=epoch, dataformats='HWC')
+
+    def plot_batch_projection(self, tag, epoch,
+                              images, target, cam,
+                              max_images=10, store=False, jupyter=False):
+
+        num = min(max_images, target.shape[0])
+        fig = plt.figure(figsize=(7, num * 3.5))
+        for i in range(num):
+            masked_idx = backproject_points(
+                target[i], fx=cam[i, 2], fy=cam[i, 3], cx=cam[i, 0], cy=cam[i, 1])
+
+            for j in range(masked_idx.shape[0]):
+                try:
+                    images[i, int(masked_idx[j, 0]), int(
+                        masked_idx[j, 1]), 0] = 0
+                    images[i, int(masked_idx[j, 0]), int(
+                        masked_idx[j, 1]), 1] = 255
+                    images[i, int(masked_idx[j, 0]), int(
+                        masked_idx[j, 1]), 2] = 0
+                except:
+                    pass
+
+            min1 = torch.min(masked_idx[:, 0])
+            max1 = torch.max(masked_idx[:, 0])
+            max2 = torch.max(masked_idx[:, 1])
+            min2 = torch.min(masked_idx[:, 1])
+
+            bb = BoundingBox(p1=torch.stack(
+                [min1, min2]), p2=torch.stack([max1, max2]))
+
+            bb_img = bb.plot(
+                images[i, :, :, :3].cpu().numpy().astype(np.uint8))
+            fig.add_subplot(num, 2, i * 2 + 1)
+            plt.imshow(bb_img)
+
+            fig.add_subplot(num, 2, i * 2 + 2)
+            real = images[i, :, :, :3].cpu().numpy().astype(np.uint8)
+            plt.imshow(real)
+
+        if store:
+            #store_ar = (img_d* 255).round().astype(np.uint8)
+            plt.savefig(
+                f'{self.p_visu}/{str(epoch)}_{tag}_project_batch.png', dpi=300)
+            #save_image(img_d, tag=str(epoch) + tag, p_store=self.p_visu)
+        if jupyter:
+            plt.show()
+        if self.writer is not None:
+            # you can get a high-resolution image as numpy array!!
+            plot_img_np = get_img_from_fig(fig)
+            self.writer.add_image(
+                f'{str(epoch)}_{tag}_project_batch', plot_img_np, global_step=epoch, dataformats='HWC')
+
+    def visu_network_input(self, tag, epoch, data, max_images=10, store=False, jupyter=False):
+        num = min(max_images, data.shape[0])
+        fig = plt.figure(figsize=(7, num * 3.5))
+
+        for i in range(num):
+
+            n_render = f'batch{i}_render.png'
+            n_real = f'batch{i}_real.png'
+            real = np.transpose(
+                data[i, :3, :, :].cpu().numpy().astype(np.uint8), (1, 2, 0))
+            render = np.transpose(
+                data[i, 3:, :, :].cpu().numpy().astype(np.uint8), (1, 2, 0))
+
+            # plt_img(real, name=n_real, folder=folder)
+            # plt_img(render, name=n_render, folder=folder)
+
+            fig.add_subplot(num, 2, i * 2 + 1)
+            plt.imshow(real)
+            plt.tight_layout()
+            fig.add_subplot(num, 2, i * 2 + 2)
+            plt.imshow(render)
+            plt.tight_layout()
+
+        if store:
+            #store_ar = (img_d* 255).round().astype(np.uint8)
+            plt.savefig(
+                f'{self.p_visu}/{str(epoch)}_{tag}_network_input.png', dpi=300)
+            #save_image(img_d, tag=str(epoch) + tag, p_store=self.p_visu)
+        if jupyter:
+            plt.show()
+        if self.writer is not None:
+            # you can get a high-resolution image as numpy array!!
+            plot_img_np = get_img_from_fig(fig)
+            self.writer.add_image(
+                f'{str(epoch)}_{tag}_network_input', plot_img_np, global_step=epoch, dataformats='HWC')
 
 
 def plot_pcd(x, point_size=0.005, c='g'):
@@ -321,3 +461,93 @@ class SequenceVisualizer():
         cmd = "cd {} && ffmpeg -r 10 -i ./filtered_{}_%d.png -vcodec mpeg4 -y {}.mp4".format(
             self.output_path, seq_no, video_name)
         os.system(cmd)
+
+
+def load_sample_dict():
+    # load data
+    os.chdir('/home/jonfrey/PLR2')
+    sys.path.append('src')
+    sys.path.append('src/dense_fusion')
+
+    from loaders_v2 import ConfigLoader, GenericDataset
+
+    exp_cfg = ConfigLoader().from_file('/home/jonfrey/PLR2/yaml/exp/exp_ws_deepim.yml')
+    env_cfg = ConfigLoader().from_file(
+        '/home/jonfrey/PLR2/yaml/env/env_natrix_jonas.yml')
+    generic = GenericDataset(
+        cfg_d=exp_cfg['d_train'],
+        cfg_env=env_cfg)
+    img = Image.open(
+        '/media/scratch1/jonfrey/datasets/YCB_Video_Dataset/data/0000/000001-color.png')
+    out = generic[0]
+    generic.visu = True
+    names = ['cloud', 'choose', 'img_masked', 'target', 'model_points',
+             'idx', 'add_depth', 'add_mask', 'img', 'cam', 'rot', 'trans', 'desig']
+
+    sample = {}
+    print(len(out[0]))
+    for i, o in enumerate(out[0]):
+        sample[names[i]] = o
+
+    return sample
+
+
+if __name__ == "__main__":
+
+    sample = load_sample_dict()
+
+    # # print content of smaple_dict
+    # for n in names:
+    #    try:
+    #        print(n, sample[n].shape)
+    #    except:
+    #        print(n, sample[n])
+    #        pass
+    # visualizer test code
+
+    p = "/home/jonfrey/tmp"
+    vis = Visualizer(p_visu=p, writer=None)
+    vis.plot_contour(tag="visu_contour_test",
+                     epoch=0,
+                     img=sample['img'],
+                     points=sample['target'],
+                     cam_cx=sample['cam'][0],
+                     cam_cy=sample['cam'][1],
+                     cam_fx=sample['cam'][2],
+                     cam_fy=sample['cam'][3],
+                     store=True)
+
+    vis.plot_estimated_pose(tag="visu_estimated_test",
+                            epoch=0,
+                            img=sample['img'],
+                            points=sample['target'],
+                            cam_cx=sample['cam'][0],
+                            cam_cy=sample['cam'][1],
+                            cam_fx=sample['cam'][2],
+                            cam_fy=sample['cam'][3],
+                            store=True)
+
+    images = sample['img']
+    images = images.unsqueeze(0)
+    images = images.repeat(10, 1, 1, 1)
+
+    target = sample['target']
+    target = target.unsqueeze(0)
+    target = target.repeat(10, 1, 1)
+
+    cam = sample['cam']
+    cam = cam.unsqueeze(0)
+    cam = cam.repeat(10, 1)
+
+    vis.plot_batch_projection(tag='batch_projection', epoch=0,
+                              images=images, target=target, cam=cam,
+                              max_images=10, store=True, jupyter=False)
+    images = torch.transpose(images, 1, 3)
+    images = torch.transpose(images, 2, 3)
+    data = torch.cat([images, images], dim=1)
+
+    vis.visu_network_input(tag="network_input",
+                           epoch=0, data=data,
+                           max_images=10,
+                           store=True,
+                           jupyter=False)
