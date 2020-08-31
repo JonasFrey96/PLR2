@@ -223,8 +223,6 @@ class TrackNet6D(LightningModule):
         super().__init__()
         self.vm = None
         self.visu_forward = False
-        self.nr_of_images_per_object = exp.get(
-            'vm_nr_of_images_per_object', 500)
         # logging h-params
         exp_config_flatten = flatten_dict(copy.deepcopy(exp))
         for k in exp_config_flatten.keys():
@@ -261,8 +259,10 @@ class TrackNet6D(LightningModule):
         self.Visu = None
         self._dict_track = {}
 
-        self.number_images_log_val = 5
-        self.number_images_log_test = 10
+        self.number_images_log_val = self.exp.get(
+            'visu', {}).get('number_images_log_val', 1)
+        self.number_images_log_test = self.exp.get(
+            'visu', {}).get('number_images_log_test', 1)
         self.counter_images_logged = 0
 
         self.init_train_vali_split = False
@@ -476,6 +476,7 @@ class TrackNet6D(LightningModule):
         return {'val_loss': val_loss, 'val_dis': val_dis}
 
     def validation_epoch_end(self, outputs):
+        self.visu_forward = False
         avg_dict = {}
         # only keys that are logged in tensorboard are removed from log_dict !
         for old_key in list(self._dict_track.keys()):
@@ -491,6 +492,7 @@ class TrackNet6D(LightningModule):
         return {'avg_val_dis_float': avg_val_dis_float, 'log': avg_dict}
 
     def train_epoch_end(self, outputs):
+        self.visu_forward = False
         avg_dict = {}
         for old_key in list(self._dict_track.keys()):
             if old_key.find('train') == -1:
